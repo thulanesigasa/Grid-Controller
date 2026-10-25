@@ -1,6 +1,8 @@
 """Grid Controller: local manual gaze-coordinate experiment."""
 import json
 import math
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
@@ -19,6 +21,11 @@ class App:
         self.rays = [[], []]
         self.scale, self.offset = 1., [0., 0.]
         self.drag = None
+        self.ai_queue = queue.Queue()
+        self.ai_busy = False
+        self.ai_engine = None
+        self.ai_data = None
+        self.ray_source = "Manual"
         self.mode = tk.StringVar(value='Player 1')
         self.angle = tk.DoubleVar(value=2.)
         self.info = tk.StringVar(value='Open an original photograph to begin.')
@@ -33,6 +40,12 @@ class App:
                                ('Zoom +', lambda: self.zoom(1.25)), ('Zoom −', lambda: self.zoom(.8)),
                                ('Reset lines', self.reset), ('Export JSON', self.export)]:
             ttk.Button(bar, text=label, command=command).pack(side='left', padx=3)
+        ai_bar = ttk.Frame(root, padding=(10, 3))
+        ai_bar.pack(fill='x')
+        self.ai_button = ttk.Button(ai_bar, text='Analyse image (AI)', command=self.analyse_image)
+        self.ai_button.pack(side='left', padx=3)
+        self.ai_status = tk.StringVar(value='AI is optional. First run downloads models; photos stay on this computer.')
+        ttk.Label(ai_bar, textvariable=self.ai_status, padding=(10, 3), wraplength=850).pack(side='left')
         ttk.Label(root, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
         controls = ttk.Frame(root, padding=10)
         controls.pack(fill='x')
@@ -69,6 +82,55 @@ class App:
         ttk.Button(panel, text='Compare selected point', command=self.compare).pack(side='left')
         ttk.Label(root, textvariable=self.check, padding=(10, 0, 10, 10)).pack(anchor='w')
 
+    def analyse_image(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph first.')
+        if self.ai_busy:
+            return
+        self.ai_busy = True
+        self.ai_button.configure(state='disabled')
+        self.ai_status.set('Loading AI / analysing… First run needs internet to download model weights.')
+        source_image = self.image
+        snapshot = source_image.copy()
+        original_rays = json.dumps(self.rays)
+        def work():
+            try:
+                from auto_gaze import AutoGaze
+                if self.ai_engine is None:
+                    self.ai_engine = AutoGaze()
+                self.ai_queue.put((source_image, original_rays, self.ai_engine.analyse(snapshot), None))
+            except Exception as exc:
+                self.ai_queue.put((source_image, original_rays, None, str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(150, self.poll_ai)
+
+    def poll_ai(self):
+        try:
+            source_image, original_rays, data, error = self.ai_queue.get_nowait()
+        except queue.Empty:
+            self.root.after(150, self.poll_ai)
+            return
+        self.ai_busy = False
+        self.ai_button.configure(state='normal')
+        if source_image is not self.image or original_rays != json.dumps(self.rays):
+            self.ai_status.set('Image or lines changed during analysis. Results discarded; analyse again when ready.')
+            return
+        if error:
+            self.ai_status.set('AI failed; your existing lines are preserved.')
+            return messagebox.showerror('AI analysis unavailable', error)
+        if not data['faces']:
+            self.ai_status.set('No usable faces/eye landmarks detected. Try an original-resolution image or manual lines.')
+            return
+        self.ai_data = data
+        self.ray_source = 'AI suggestion'
+        self.rays = [face['ray'] or [] for face in data['faces']]
+        self.rays += [[] for _ in range(2-len(self.rays))]
+        self.angle.set(10.)
+        self.ai_status.set(f"Found {data['detected_count']} usable faces; using {len(data['faces'])}, "
+                           'largest first, P1 on the left. Review the boxes and lines. '
+                           'Missing lines mean the projected direction is unstable. ±10° is a sensitivity setting, not confidence.')
+        self.draw()
+
     def point(self, e):
         return image_point(e.x, e.y, self.scale, self.offset)
 
@@ -90,6 +152,8 @@ class App:
             messagebox.showerror('Cannot open image', str(exc))
             return
         self.path, self.rays, self.clicked = path, [[], []], None
+        self.ai_data = None
+        self.ray_source = "Manual"
         self.check.set('Click in Inspect mode to record a comparison point.')
         self.info.set(f'{self.image.width:,} × {self.image.height:,} original pixels • '
                       'origin: top left • X right, Y down • no automatic rotation')
@@ -124,6 +188,7 @@ class App:
             self.clicked = p
             self.check.set(f'Selected original-image point: X={p[0]:.1f}, Y={p[1]:.1f}')
         else:
+            self.ray_source = 'AI + manual edits' if self.ai_data else 'Manual'
             i = int(self.mode.get()[-1])-1
             for j, handle in enumerate(self.rays[i]):
                 hx, hy = self.screen(handle)
@@ -146,6 +211,7 @@ class App:
             self.offset = [ox+e.x-x, oy+e.y-y]
         elif self.inside(self.point(e)):
             _, i, j = self.drag
+            self.ray_source = 'AI + manual edits' if self.ai_data else 'Manual'
             self.rays[i][j] = self.point(e)
         self.draw()
 
@@ -155,6 +221,8 @@ class App:
 
     def reset(self):
         self.rays = [[], []]
+        self.ai_data = None
+        self.ray_source = "Manual"
         self.draw()
 
     def estimate(self):
@@ -179,6 +247,14 @@ class App:
             resample=Image.Resampling.BILINEAR, fillcolor='#111827')
         self.photo = ImageTk.PhotoImage(visible)
         self.canvas.create_image(0, 0, anchor='nw', image=self.photo)
+        if self.ai_data:
+            for i, face in enumerate(self.ai_data['faces']):
+                box = face['box']
+                self.canvas.create_rectangle(*self.screen(box[:2]), *self.screen(box[2:]),
+                                             outline=COLORS[i], dash=(4, 3))
+                for eye in face['eyes']:
+                    x, y = self.screen(eye)
+                    self.canvas.create_oval(x-2, y-2, x+2, y+2, outline='white')
         for i, ray in enumerate(self.rays):
             for j, p in enumerate(ray):
                 x, y = self.screen(p)
@@ -206,7 +282,7 @@ class App:
                 self.canvas.create_line(x-12, y, x+12, y, fill='white', width=2)
                 self.canvas.create_line(x, y-12, x, y+12, fill='white', width=2)
                 xs, ys = [q[0] for q in samples], [q[1] for q in samples]
-                self.result.set(f'Manual intersection: X={p[0]:.1f}, Y={p[1]:.1f} '
+                self.result.set(f'{self.ray_source} intersection: X={p[0]:.1f}, Y={p[1]:.1f} '
                     f'({"inside" if self.inside(p) else "OUTSIDE"} image). '
                     f'±{self.degrees():g}° sampled range: X {min(xs):.0f}–{max(xs):.0f}, '
                     f'Y {min(ys):.0f}–{max(ys):.0f}. Sensitivity only; not confidence or a verified ball location.')
@@ -235,7 +311,7 @@ class App:
             data = dict(schema_version=1, image_name=self.path.replace('\\', '/').split('/')[-1],
                         width=self.image.width, height=self.image.height, rays=self.rays,
                         estimated_intersection=self.estimate(), sensitivity_degrees=self.degrees(),
-                        method='manual gaze rays; unvalidated estimate', game_mapping_verified=False)
+                        method=self.ray_source + ' gaze rays; unvalidated estimate', ai_analysis=self.ai_data, game_mapping_verified=False)
             try:
                 with open(path, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=2)

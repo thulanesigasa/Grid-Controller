@@ -1,6 +1,6 @@
 # Grid Controller — Gaze Lab
 
-A local Python desktop prototype for exploring where two manually estimated gaze rays intersect in a photograph. All coordinates remain in original-image pixels through zoom and pan. No automatic gaze model is included. An intersection is not proof of a missing ball's location.
+A local Python desktop prototype for exploring where two manually estimated gaze rays intersect in a photograph. All coordinates remain in original-image pixels through zoom and pan. Optional local AI detects faces and eye landmarks, then estimates gaze angles to suggest editable lines. An intersection is not proof of a missing ball's location.
 
 ## Run on Windows
 
@@ -39,4 +39,37 @@ Tests cover known intersections, invalid rays and coordinate transforms under zo
 
 ## Design
 
-Tkinter supplies the desktop UI; Pillow decodes and renders the visible image region. Geometry uses Python's standard math library. OpenCV/NumPy are not necessary for this manual prototype; a future automatic gaze-estimation experiment can add them after the manual baseline is evaluated.
+Tkinter supplies the desktop UI; Pillow renders the visible image region. Geometry uses Python math. The optional AI path uses UniFace, OpenCV, NumPy and ONNX Runtime on CPU.
+
+
+## Automatic eyes and gaze suggestions
+
+From your existing checkout, close the app, then run in PowerShell:
+
+```powershell
+git pull --ff-only origin main
+.venv\Scripts\python -m pip install -r requirements-ai.txt
+.venv\Scripts\python app.py
+```
+
+Open the original photo and click **Analyse image (AI)**. The first run downloads RetinaFace and MobileGaze ResNet34 model weights into UniFace's local cache (roughly 100 MB total); later runs reuse them. Internet is needed for those downloads, but photographs are processed locally and are not uploaded. Python 3.11 or 3.12 is recommended for the optional AI dependencies.
+
+The model runs in a background thread. The app detects face boxes and two eye landmarks, uses their midpoint as the ray origin, and estimates pitch/yaw from each full-resolution face crop. It selects the two largest usable faces and labels them left-to-right. With more people, verify that these are your intended subjects. One detected face only produces one suggestion. Near-camera-facing predictions have no stable projected direction and leave that ray empty. No detections or a model/download error preserves existing lines. Changing the image or lines during analysis discards stale results.
+
+Review the boxes and directions, then drag handles to correct them. The tool computes a forward intersection only when the suggested rays permit one; it does not force agreement or invent a target when they diverge. Automatic analysis sets angle sensitivity to ±10° as an illustrative perturbation, **not a calibrated uncertainty interval**. Manual edits are identified in the display and export; exported raw model suggestions remain available for comparison.
+
+### What automatic analysis does not establish
+
+Eye landmarks are estimated eye positions, not precise pupil tracking. A predicted gaze angle is projected into 2D using the upstream visualization convention. There is no calibrated camera geometry, eye-depth measurement, ball detector or learned missing-ball reconstruction. Two projected rays can miss the true target even when facial predictions look plausible. A single image cannot establish a guaranteed ball coordinate. The original image contains no ground-truth ball for evaluating accuracy.
+
+### Model sources
+
+- [UniFace](https://github.com/yakhyo/uniface) — optional pinned dependency, RetinaFace landmarks and MobileGaze inference; MIT code license.
+- [MobileGaze](https://github.com/yakhyo/gaze-estimation) — gaze models trained on Gaze360. Follow upstream model and dataset terms for your intended use; weights are downloaded by the dependency, not bundled here.
+- [Upstream gaze module documentation](https://yakhyo.github.io/uniface/modules/gaze/).
+
+Unit tests exercise the projection sign convention, unstable camera-facing inputs, non-finite values and the manual geometry. They do not measure gaze accuracy.
+
+### Development smoke test
+
+The full CPU pipeline was run on the original 4416 × 3336 photograph on 25 October 2026. It detected both players, produced eye landmarks and gaze rays, and returned a forward intersection around `(2068, 1152)`. This is an unvalidated model output, not a known ball position. There is no ground-truth ball location in the supplied photograph. Desktop interaction still needs a Windows check; model inference and geometry were tested separately in a headless environment.
