@@ -17,6 +17,30 @@ def projected_ray(origin, pitch, yaw, length):
     return [list(origin), [origin[0]+length*dx/norm, origin[1]+length*dy/norm]]
 
 
+def refine_eyes(coarse, landmarks, score, box):
+    """Validate each mesh iris independently; preserve coarse eyes on failure.
+
+    Indices 468/473 are V2 iris centres. Presence is not eye-position confidence.
+    """
+    import numpy as np
+    eyes = np.asarray(coarse, dtype=float).copy()
+    status = ['coarse fallback', 'coarse fallback']
+    pts = np.asarray(landmarks, dtype=float)
+    if not math.isfinite(float(score)) or score < .8 or pts.ndim != 2 or pts.shape[0] < 478 or pts.shape[1] < 2:
+        return eyes, status
+    x1, y1, x2, y2 = box
+    size = max(x2-x1, y2-y1)
+    for i, idx in enumerate((468, 473)):
+        point = pts[idx, :2]
+        if (np.isfinite(point).all() and x1 <= point[0] <= x2 and y1 <= point[1] <= y2
+                and np.linalg.norm(point-eyes[i]) <= .3*size):
+            eyes[i] = point
+            status[i] = 'iris refined'
+    if not .15*(x2-x1) <= np.linalg.norm(eyes[1]-eyes[0]) <= .9*(x2-x1) or eyes[0, 0] >= eyes[1, 0]:
+        return np.asarray(coarse, dtype=float).copy(), ['coarse fallback']*2
+    return eyes, status
+
+
 class AutoGaze:
     def __init__(self):
         try:
@@ -27,11 +51,20 @@ class AutoGaze:
             raise RuntimeError('Install AI dependencies first: python -m pip install -r requirements-ai.txt') from exc
         # UniFace downloads and verifies its model files, then caches them locally.
         self.detector = RetinaFace(input_size=(1280, 1280), providers=['CPUExecutionProvider'])
+        self.eye_mesh = None
+        self.eye_warning = None
         self.estimator = MobileGaze(model_name=GazeWeights.RESNET34, providers=['CPUExecutionProvider'])
 
     def analyse(self, image):
         import cv2
         import numpy as np
+        if self.eye_mesh is None and self.eye_warning is None:
+            try:
+                from uniface.landmark import FaceMesh
+                from uniface.constants import FaceMeshWeights
+                self.eye_mesh = FaceMesh(model_name=FaceMeshWeights.V2_478, providers=['CPUExecutionProvider'])
+            except Exception as exc:
+                self.eye_warning = 'Iris refinement unavailable: ' + str(exc)
         rgb = np.asarray(image.convert('RGB'))
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         height, width = bgr.shape[:2]
@@ -65,11 +98,21 @@ class AutoGaze:
         results = []
         for face, box, eyes in selected:
             x1, y1, x2, y2 = box
+            coarse_eyes = eyes.copy()
+            eye_status = ['coarse fallback']*2
+            eye_warning = self.eye_warning
+            if self.eye_mesh is not None:
+                try:
+                    mesh = self.eye_mesh.predict(bgr, bboxes=[np.asarray(box)], keypoints=[eyes])[0]
+                    eyes, eye_status = refine_eyes(eyes, mesh.landmarks, mesh.score, box)
+                except Exception as exc:
+                    eye_warning = 'Iris refinement failed: ' + str(exc)
             prediction = self.estimator.estimate(bgr[y1:y2, x1:x2])
             pitch, yaw = float(prediction.pitch), float(prediction.yaw)
             origin = eyes.mean(axis=0).tolist()
             ray = projected_ray(origin, pitch, yaw, min(width, height)*.15)
-            results.append(dict(box=list(box), eyes=eyes.tolist(), ray=ray,
+            results.append(dict(box=list(box), eyes=eyes.tolist(), coarse_eyes=coarse_eyes.tolist(),
+                                eye_status=eye_status, eye_warning=eye_warning, ray=ray,
                                 pitch_radians=pitch, yaw_radians=yaw))
         return dict(faces=results, detected_count=count, model='UniFace 4.1.0 / MobileGaze ResNet34',
                     projection='uncalibrated 2D projection of estimated gaze',

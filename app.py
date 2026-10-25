@@ -49,8 +49,8 @@ class App:
         ttk.Label(root, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
         controls = ttk.Frame(root, padding=10)
         controls.pack(fill='x')
-        for mode in ('Player 1', 'Player 2', 'Inspect', 'Pan'):
-            ttk.Radiobutton(controls, text=mode, variable=self.mode, value=mode).pack(side='left', padx=8)
+        for mode in ('Player 1', 'Player 2', 'Edit eyes', 'Inspect', 'Pan'):
+            ttk.Radiobutton(controls, text=mode, variable=self.mode, value=mode, command=self.draw).pack(side='left', padx=8)
         ttk.Label(controls, text='Angle sensitivity ± degrees:').pack(side='left', padx=(20, 5))
         ttk.Spinbox(controls, from_=0, to=15, increment=.5, width=5,
                     textvariable=self.angle, command=self.draw).pack(side='left')
@@ -92,7 +92,7 @@ class App:
         self.ai_status.set('Loading AI / analysing… First run needs internet to download model weights.')
         source_image = self.image
         snapshot = source_image.copy()
-        original_rays = json.dumps(self.rays)
+        original_rays = json.dumps([self.rays, self.ai_data])
         def work():
             try:
                 from auto_gaze import AutoGaze
@@ -112,7 +112,7 @@ class App:
             return
         self.ai_busy = False
         self.ai_button.configure(state='normal')
-        if source_image is not self.image or original_rays != json.dumps(self.rays):
+        if source_image is not self.image or original_rays != json.dumps([self.rays, self.ai_data]):
             self.ai_status.set('Image or lines changed during analysis. Results discarded; analyse again when ready.')
             return
         if error:
@@ -129,6 +129,9 @@ class App:
         self.ai_status.set(f"Found {data['detected_count']} usable faces; using {len(data['faces'])}, "
                            'largest first, P1 on the left. Review the boxes and lines. '
                            'Missing lines mean the projected direction is unstable. ±10° is a sensitivity setting, not confidence.')
+        refined = sum(s == 'iris refined' for f in data['faces'] for s in f.get('eye_status', []))
+        total = 2*len(data['faces'])
+        self.ai_status.set(self.ai_status.get() + f' Iris refinement: {refined}/{total}; yellow rings are coarse fallback. Use Edit eyes to correct rings.')
         self.draw()
 
     def point(self, e):
@@ -184,6 +187,18 @@ class App:
         p = self.point(e)
         if not self.inside(p):
             return
+        if self.mode.get() == 'Edit eyes':
+            if self.ai_data:
+                handles = [(math.dist(self.screen(eye), (e.x, e.y)), i, j)
+                           for i, face in enumerate(self.ai_data['faces'])
+                           for j, eye in enumerate(face['eyes'])]
+                if handles:
+                    distance, i, j = min(handles)
+                    if distance < 14:
+                        self.drag = ('eye', i, j)
+                        return
+            self.check.set('Zoom into a face and drag a small eye ring. Run AI analysis first.')
+            return
         if self.mode.get() == 'Inspect':
             self.clicked = p
             self.check.set(f'Selected original-image point: X={p[0]:.1f}, Y={p[1]:.1f}')
@@ -209,6 +224,17 @@ class App:
         if self.drag[0] == 'pan':
             _, x, y, ox, oy = self.drag
             self.offset = [ox+e.x-x, oy+e.y-y]
+        elif self.drag[0] == 'eye' and self.inside(self.point(e)):
+            _, i, j = self.drag
+            face = self.ai_data['faces'][i]
+            old = [sum(eye[k] for eye in face['eyes'])/2 for k in (0, 1)]
+            face['eyes'][j] = list(self.point(e))
+            face['eye_status'][j] = 'manually corrected'
+            new = [sum(eye[k] for eye in face['eyes'])/2 for k in (0, 1)]
+            if len(self.rays[i]) == 2:
+                # Shift origin and endpoint equally; preserve the estimated direction.
+                self.rays[i] = [[p[k]+new[k]-old[k] for k in (0, 1)] for p in self.rays[i]]
+            self.ray_source = 'AI + manual eye correction'
         elif self.inside(self.point(e)):
             _, i, j = self.drag
             self.ray_source = 'AI + manual edits' if self.ai_data else 'Manual'
@@ -252,9 +278,13 @@ class App:
                 box = face['box']
                 self.canvas.create_rectangle(*self.screen(box[:2]), *self.screen(box[2:]),
                                              outline=COLORS[i], dash=(4, 3))
-                for eye in face['eyes']:
+                for j, eye in enumerate(face['eyes']):
                     x, y = self.screen(eye)
-                    self.canvas.create_oval(x-2, y-2, x+2, y+2, outline='white')
+                    status = face.get('eye_status', ['coarse fallback']*2)[j]
+                    color = '#fde047' if status == 'coarse fallback' else 'white'
+                    self.canvas.create_oval(x-4, y-4, x+4, y+4, outline=color, width=1)
+                    if self.mode.get() == 'Edit eyes':
+                        self.canvas.create_text(x, y-10, text=f'P{i+1} eye {j+1}', fill=color, anchor='s')
         for i, ray in enumerate(self.rays):
             for j, p in enumerate(ray):
                 x, y = self.screen(p)

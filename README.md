@@ -73,3 +73,13 @@ Unit tests exercise the projection sign convention, unstable camera-facing input
 ### Development smoke test
 
 The full CPU pipeline was run on the original 4416 × 3336 photograph on 25 October 2026. It detected both players, produced eye landmarks and gaze rays, and returned a forward intersection around `(2068, 1152)`. This is an unvalidated model output, not a known ball position. There is no ground-truth ball location in the supplied photograph. Desktop interaction still needs a Windows check; model inference and geometry were tested separately in a headless environment.
+
+## Refined eye placement
+
+AI analysis now follows the coarse face detector with the UniFace **FaceMesh V2 478-point iris model**, using each face's original-resolution pixels. It estimates iris centres (indices 468 and 473) and updates the ray's origin to their midpoint. This additional model is about 4.6 MB and downloads once. The gaze-angle model is unchanged: more appropriate ray origins do not by themselves prove better gaze angles or a more accurate ball position.
+
+White eye rings indicate accepted refinement (or manual correction); yellow rings indicate a coarse fallback. Refinement checks face presence, finite positions, bounds, movement from the coarse landmarks and eye separation. These are sanity checks, not calibrated eye-accuracy scores. Download or inference failure retains coarse eye estimates and marks them as fallback. Restart the app to retry a failed model download.
+
+To correct an individual eye, select **Edit eyes**, zoom in, and drag its small ring onto the visible iris centre. The labels `eye 1` and `eye 2` follow image-left/image-right order, avoiding anatomical left/right ambiguity. The gaze origin and endpoint move together, preserving the current line angle. Raw coarse landmarks, refined/corrected coordinates and per-eye status are included in JSON export.
+
+On the supplied photo, the iris refinement was compared visually against the previous coarse markers on full-resolution face crops and the complete pipeline accepted all four iris estimates. This is a qualitative check on one image, not a measured accuracy benchmark. Blur, occlusion and extreme gaze can still cause errors; increasing zoom does not recover missing image detail.
