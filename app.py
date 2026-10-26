@@ -6,6 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
+from validation import freeze_prediction, label_record
 from geometry import intersection, sensitivity, image_point, rotate, cone_overlap
 
 COLORS = ('#00d8ff', '#ffb340')
@@ -35,6 +36,8 @@ class App:
         self.cursor = tk.StringVar(value='Image coordinates: —')
         self.check = tk.StringVar(value='Click in Inspect mode to record a comparison point.')
         self.clicked = None
+        self.validation_snapshot = None
+        self.validation_target = None
         bar = ttk.Frame(root, padding=10)
         bar.pack(fill='x')
         ttk.Label(bar, text='GRID CONTROLLER', font=('', 15, 'bold')).pack(side='left', padx=(0, 20))
@@ -76,6 +79,18 @@ class App:
         self.canvas.bind('<Configure>', lambda e: self.draw())
         ttk.Label(root, textvariable=self.cursor, padding=(10, 4)).pack(anchor='w')
         ttk.Label(root, textvariable=self.result, padding=(10, 4), wraplength=1150).pack(anchor='w')
+        validation_bar = ttk.Frame(root, padding=(10, 4))
+        validation_bar.pack(fill='x')
+        ttk.Button(validation_bar, text='Freeze prediction', command=self.freeze_validation).pack(side='left')
+        ttk.Radiobutton(validation_bar, text='Mark known ball', variable=self.mode, value='Mark ball').pack(side='left', padx=6)
+        self.ball_verified = tk.BooleanVar(value=False)
+        ttk.Checkbutton(validation_bar, text='Ball is visible / centre verified', variable=self.ball_verified).pack(side='left')
+        ttk.Label(validation_bar, text='Match/group:').pack(side='left', padx=(6, 0))
+        self.validation_group = tk.StringVar()
+        ttk.Entry(validation_bar, textvariable=self.validation_group, width=14).pack(side='left')
+        ttk.Button(validation_bar, text='Save validation JSON', command=self.save_validation).pack(side='left', padx=6)
+        self.validation_status = tk.StringVar(value='Validation: freeze a prediction before marking a visible ball. No training runs automatically.')
+        ttk.Label(root, textvariable=self.validation_status, padding=(10, 3), wraplength=1150).pack(anchor='w')
         panel = ttk.Frame(root, padding=10)
         panel.pack(fill='x')
         ttk.Label(panel, text='Game comparison: X').pack(side='left')
@@ -163,6 +178,7 @@ class App:
             messagebox.showerror('Cannot open image', str(exc))
             return
         self.path, self.rays, self.clicked = path, [[], []], None
+        self.clear_validation()
         self.ai_data = None
         self.ray_source = "Manual"
         self.check.set('Click in Inspect mode to record a comparison point.')
@@ -194,6 +210,15 @@ class App:
             return self.pan_start(e)
         p = self.point(e)
         if not self.inside(p):
+            return
+        if self.mode.get() == 'Mark ball':
+            if self.validation_snapshot is None:
+                self.validation_status.set('Freeze the prediction first, then mark the known ball centre.')
+                return
+            self.validation_target = list(p)
+            self.ball_verified.set(False)
+            self.update_validation_status()
+            self.draw()
             return
         if self.mode.get() == 'Eye directions':
             handles = [(math.dist(self.screen(ray[1]), (e.x, e.y)), i, j)
@@ -277,6 +302,7 @@ class App:
         self.cursor.set(f'Image coordinates: X={p[0]:.1f}, Y={p[1]:.1f}' if self.inside(p) else 'Outside image')
 
     def reset(self):
+        self.clear_validation()
         self.rays = [[], []]
         self.ai_data = None
         self.ray_source = "Manual"
@@ -383,9 +409,65 @@ class App:
                     f'Y {min(ys):.0f}–{max(ys):.0f}. Sensitivity only; not confidence or a verified ball location.')
         if (self.ai_data or {}).get('per_eye_enabled'):
             self.draw_eye_overlay()
+        if self.validation_target:
+            x, y = self.screen(self.validation_target)
+            self.canvas.create_oval(x-7, y-7, x+7, y+7, outline='#ff4fa3', width=2)
+            self.canvas.create_text(x+10, y+10, text='Known ball (label)', fill='#ff4fa3', anchor='nw')
         if self.clicked:
             x, y = self.screen(self.clicked)
             self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
+
+    def clear_validation(self):
+        self.validation_snapshot = None
+        self.validation_target = None
+        self.ball_verified.set(False)
+        self.validation_status.set('Validation cleared. Freeze a prediction before marking a known ball.')
+
+    def freeze_validation(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph with a visible ball first.')
+        if self.ai_busy:
+            return self.validation_status.set('Wait for AI analysis to finish before freezing the prediction.')
+        if self.ai_data is None and not all(len(r) == 2 for r in self.rays):
+            return self.validation_status.set('Run AI analysis or draw both manual rays first.')
+        per_eye = (self.ai_data or {}).get('per_eye_enabled', False)
+        self.validation_snapshot = freeze_prediction(
+            self.image, self.path.replace('\\', '/').split('/')[-1], self.ray_source,
+            self.rays, self.ai_data, None if per_eye else self.estimate(),
+            self.eye_overlay()[1] if per_eye else None, self.degrees())
+        self.validation_target = None
+        self.ball_verified.set(False)
+        self.mode.set('Mark ball')
+        self.validation_status.set('Prediction frozen. Click the visible ball centre. Later line edits do not change this saved prediction.')
+        self.draw()
+
+    def update_validation_status(self):
+        record = label_record(self.validation_snapshot, self.validation_target)
+        m = record['metrics']
+        if m['point_prediction_available']:
+            detail = f"Error: {m['error_pixels']:.1f} px ({m['error_percent_diagonal']:.2f}% of image diagonal)."
+        elif self.validation_snapshot['prediction']['region'] is not None:
+            detail = ('Known ball is inside' if m['target_in_region'] else 'Known ball is outside') + ' the frozen overlap region. No point prediction to score.'
+        else:
+            detail = 'No forward intersection was predicted; point error is unavailable, not zero.'
+        self.validation_status.set('Frozen prediction — ' + detail + ' Verify the label before saving; current lines may differ.')
+
+    def save_validation(self):
+        if self.validation_snapshot is None or self.validation_target is None:
+            return messagebox.showinfo('Validation', 'Freeze a prediction, then click the known ball centre.')
+        if not self.ball_verified.get():
+            return messagebox.showinfo('Verify ball label', 'Only mark this verified when the ball is visible and you have checked its centre. A guessed missing-ball position is not ground truth.')
+        record = label_record(self.validation_snapshot, self.validation_target,
+                              self.validation_group.get(), verified=True)
+        path = filedialog.asksaveasfilename(defaultextension='.json', initialfile='validation.json',
+                                          filetypes=[('Validation JSON', '*.json')])
+        if path:
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(record, f, indent=2, allow_nan=False)
+                self.validation_status.set('Validation saved: frozen prediction, ball label and metrics. No model training performed.')
+            except (OSError, ValueError) as exc:
+                messagebox.showerror('Validation export failed', str(exc))
 
     def compare(self):
         if self.clicked is None:

@@ -111,3 +111,44 @@ Model code and model details: [ptgaze](https://github.com/hysts/pytorch_mpiigaze
 ### Per-eye validation status
 
 Geometry/projection and per-eye editing tests pass, including a known shared target, diverging cones, missing rays, image bounds and preserving direction when moving an iris. End-to-end per-eye inference and Windows desktop interaction have **not yet been validated**. The development environment lacked MediaPipe's native `libGLESv2.so.2`; Linux may need its distribution's GLES package (for example `libgles2` on Debian/Ubuntu). Automatic approval review also stopped an unexpected telemetry request during the full-photo test. ONNX Runtime telemetry is now explicitly disabled before creating inference sessions; the photo test was not retried. These implementation checks do not measure gaze or ball-location accuracy.
+
+## Validation mode: measure against a visible ball
+
+This mode collects evaluation records; it does **not** train or update the AI.
+Use photographs where the ball is visible and the selected players are watching it.
+A guessed position in a missing-ball competition image is not ground truth.
+
+1. Open the original photo and run AI analysis (or draw your manual estimate).
+2. Click **Freeze prediction** before labelling the ball. This captures the source,
+   rays, model output, angle setting and point/overlap region independently of later edits.
+   While AI is busy, freezing is disabled by a status message.
+3. The app switches to **Mark known ball**. Click the visible ball centre. A pink
+   marker shows the label; zoom and pan preserve original-image coordinates.
+4. Check **Ball is visible / centre verified** after checking your label. Optionally
+   enter a **Match/group** identifier so related photographs can stay together in
+   future training/test splits. Verification is your annotation, not independent certification.
+5. Click **Save validation JSON**. Save each trial under its own filename, e.g.
+   `match01-frame03-ai.json` and `match01-frame03-manual.json`.
+
+The record includes the decoded RGB image hash, image dimensions, UTC timestamps,
+source/model information, a frozen prediction, the user-labelled ball centre and
+error in pixels and as a percentage of image diagonal. Photos are not embedded or
+uploaded. Keep originals alongside records for future evaluation/training.
+
+A missing forward intersection has a null point error, not zero. Per-eye mode has
+no point prediction: its metric is whether the frozen overlap region contains the
+known ball, at the recorded tolerance. Empty regions remain misses. Region coverage
+alone does not establish accuracy because increasing tolerance enlarges regions.
+
+Changing lines, rerunning AI or changing tolerance does not change the frozen trial.
+**Freeze prediction** starts a new trial and clears its ball label; opening another
+image or **Reset lines** clears validation. Save before replacing a trial. The regular
+**Export JSON** remains an export of current analysis, distinct from validation JSON.
+
+For fair evaluation, record failures as well as successes and use identical ball
+labels for AI/manual comparisons. Do not tune lines after seeing the answer and
+present that as an independent manual prediction. Current AI uses face crops, but
+verify that a visible ball does not appear inside those crops; this mode does not
+mask it automatically. No calibrated reliability score is added. Training and held-out
+accuracy measurements are still future work; do not train and test on the same match
+or near-duplicate frames.
