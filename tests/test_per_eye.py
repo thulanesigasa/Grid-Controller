@@ -50,3 +50,32 @@ class PerEyeTests(unittest.TestCase):
         app.drag = ('eye_direction', 0, 1)
         app.move(None)
         self.assertEqual(face['eye_rays'][1], [[60, 30], [25, 35]])
+
+
+class HeadPoseInputTests(unittest.TestCase):
+    def test_xyz_slice_reproduces_error_then_recovers_pose(self):
+        import numpy as np
+        import cv2
+        from per_eye import prepare_landmarks
+        rng = np.random.default_rng(42)
+        model = rng.uniform(-.1, .1, (468, 3))
+        camera = np.array([[1000., 0, 500], [0, 1000, 400], [0, 0, 1]])
+        expected = np.array([0., 0., 1.])
+        xy, _ = cv2.projectPoints(model, np.zeros(3), expected, camera, np.zeros(5))
+        mesh = np.zeros((478, 3))
+        mesh[:468, :2] = xy.reshape(-1, 2)
+        sliced = mesh[:468, :2]
+        self.assertFalse(sliced.flags.c_contiguous)
+        with self.assertRaises(cv2.error):
+            cv2.solvePnP(model, sliced, camera, np.zeros(5))
+        ok, rotation, translation = cv2.solvePnP(model, prepare_landmarks(sliced), camera, np.zeros(5))
+        self.assertTrue(ok)
+        np.testing.assert_allclose(translation.ravel(), expected, atol=1e-6)
+        np.testing.assert_allclose(rotation.ravel(), 0, atol=1e-6)
+
+    def test_invalid_mesh_is_rejected_before_opencv(self):
+        import numpy as np
+        from per_eye import prepare_landmarks
+        for points in (np.zeros((467, 2)), np.full((468, 2), np.nan)):
+            with self.assertRaises(ValueError):
+                prepare_landmarks(points)

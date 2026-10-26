@@ -16,6 +16,17 @@ def screen_ray(origin, projected, length):
     return [list(origin), [float(origin[0]+length*dx/norm), float(origin[1]+length*dy/norm)]]
 
 
+def prepare_landmarks(landmarks):
+    """OpenCV solvePnP requires packed floating-point XY coordinates."""
+    import numpy as np
+    points = np.asarray(landmarks)
+    if points.shape != (468, 2) or not np.isfinite(points).all():
+        raise ValueError('Expected 468 finite XY face landmarks for head pose.')
+    # Slicing XY from an XYZ mesh leaves gaps between rows. np.asarray alone
+    # preserves those strides, which OpenCV's checkVector rejects.
+    return np.ascontiguousarray(points, dtype=np.float64)
+
+
 class PerEyeGaze:
     def __init__(self, width, height):
         try:
@@ -48,7 +59,7 @@ class PerEyeGaze:
         from ptgaze.common import Face
         if landmarks is None:
             return [None, None], 'No reliable face mesh for eye normalization.'
-        face = Face(np.asarray(box).reshape(2, 2), np.asarray(landmarks))
+        face = Face(np.asarray(box).reshape(2, 2), prepare_landmarks(landmarks))
         self.engine.estimate_gaze(bgr, face)
         rays = []
         for eye, origin in zip((face.reye, face.leye), eyes):
