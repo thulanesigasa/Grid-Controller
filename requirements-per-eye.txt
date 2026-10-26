@@ -1,0 +1,3 @@
+-r requirements-ai.txt
+# Python 3.10+. Install CPU PyTorch first to avoid unnecessary GPU packages.
+ptgaze @ git+https://github.com/hysts/pytorch_mpiigaze_demo.git@7993db777ac0fae4f976213bfc4b1b8741ba164d

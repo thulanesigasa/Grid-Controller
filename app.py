@@ -6,7 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
-from geometry import intersection, sensitivity, image_point
+from geometry import intersection, sensitivity, image_point, rotate, cone_overlap
 
 COLORS = ('#00d8ff', '#ffb340')
 
@@ -28,6 +28,8 @@ class App:
         self.ray_source = "Manual"
         self.mode = tk.StringVar(value='Player 1')
         self.angle = tk.DoubleVar(value=2.)
+        self.per_eye = tk.BooleanVar(value=False)
+        self.boundaries = tk.BooleanVar(value=True)
         self.info = tk.StringVar(value='Open an original photograph to begin.')
         self.result = tk.StringVar(value='Manual estimate • no gaze model is running')
         self.cursor = tk.StringVar(value='Image coordinates: —')
@@ -44,12 +46,14 @@ class App:
         ai_bar.pack(fill='x')
         self.ai_button = ttk.Button(ai_bar, text='Analyse image (AI)', command=self.analyse_image)
         self.ai_button.pack(side='left', padx=3)
+        ttk.Checkbutton(ai_bar, text='Per-eye AI (experimental)', variable=self.per_eye).pack(side='left')
+        ttk.Checkbutton(ai_bar, text='Boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
         self.ai_status = tk.StringVar(value='AI is optional. First run downloads models; photos stay on this computer.')
-        ttk.Label(ai_bar, textvariable=self.ai_status, padding=(10, 3), wraplength=850).pack(side='left')
+        ttk.Label(ai_bar, textvariable=self.ai_status, padding=(10, 3), wraplength=600).pack(side='left')
         ttk.Label(root, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
         controls = ttk.Frame(root, padding=10)
         controls.pack(fill='x')
-        for mode in ('Player 1', 'Player 2', 'Edit eyes', 'Inspect', 'Pan'):
+        for mode in ('Player 1', 'Player 2', 'Edit eyes', 'Eye directions', 'Inspect', 'Pan'):
             ttk.Radiobutton(controls, text=mode, variable=self.mode, value=mode, command=self.draw).pack(side='left', padx=8)
         ttk.Label(controls, text='Angle sensitivity ± degrees:').pack(side='left', padx=(20, 5))
         ttk.Spinbox(controls, from_=0, to=15, increment=.5, width=5,
@@ -93,12 +97,13 @@ class App:
         source_image = self.image
         snapshot = source_image.copy()
         original_rays = json.dumps([self.rays, self.ai_data])
+        use_per_eye = self.per_eye.get()
         def work():
             try:
                 from auto_gaze import AutoGaze
                 if self.ai_engine is None:
                     self.ai_engine = AutoGaze()
-                self.ai_queue.put((source_image, original_rays, self.ai_engine.analyse(snapshot), None))
+                self.ai_queue.put((source_image, original_rays, self.ai_engine.analyse(snapshot, per_eye=use_per_eye), None))
             except Exception as exc:
                 self.ai_queue.put((source_image, original_rays, None, str(exc)))
         threading.Thread(target=work, daemon=True).start()
@@ -122,7 +127,7 @@ class App:
             self.ai_status.set('No usable faces/eye landmarks detected. Try an original-resolution image or manual lines.')
             return
         self.ai_data = data
-        self.ray_source = 'AI suggestion'
+        self.ray_source = 'Per-eye AI suggestion' if data.get('per_eye_enabled') else 'AI suggestion'
         self.rays = [face['ray'] or [] for face in data['faces']]
         self.rays += [[] for _ in range(2-len(self.rays))]
         self.angle.set(10.)
@@ -132,6 +137,9 @@ class App:
         refined = sum(s == 'iris refined' for f in data['faces'] for s in f.get('eye_status', []))
         total = 2*len(data['faces'])
         self.ai_status.set(self.ai_status.get() + f' Iris refinement: {refined}/{total}; yellow rings are coarse fallback. Use Edit eyes to correct rings.')
+        if data.get('per_eye_enabled'):
+            self.ai_status.set('Per-eye model: assumed camera calibration. Drag endpoint circles in Eye directions mode. '
+                               + ' '.join(f"P{i+1}: {f.get('per_eye_note', '')}" for i, f in enumerate(data['faces'])))
         self.draw()
 
     def point(self, e):
@@ -187,6 +195,15 @@ class App:
         p = self.point(e)
         if not self.inside(p):
             return
+        if self.mode.get() == 'Eye directions':
+            handles = [(math.dist(self.screen(ray[1]), (e.x, e.y)), i, j)
+                       for i, face in enumerate((self.ai_data or {}).get('faces', []))
+                       for j, ray in enumerate(face.get('eye_rays', [])) if ray]
+            if handles:
+                distance, i, j = min(handles)
+                if distance < 14:
+                    self.drag = ('eye_direction', i, j)
+            return
         if self.mode.get() == 'Edit eyes':
             if self.ai_data:
                 handles = [(math.dist(self.screen(eye), (e.x, e.y)), i, j)
@@ -203,6 +220,9 @@ class App:
             self.clicked = p
             self.check.set(f'Selected original-image point: X={p[0]:.1f}, Y={p[1]:.1f}')
         else:
+            if (self.ai_data or {}).get('per_eye_enabled'):
+                self.check.set('Use Eye directions to edit per-eye rays, or uncheck Per-eye AI and analyse again.')
+                return
             self.ray_source = 'AI + manual edits' if self.ai_data else 'Manual'
             i = int(self.mode.get()[-1])-1
             for j, handle in enumerate(self.rays[i]):
@@ -224,11 +244,22 @@ class App:
         if self.drag[0] == 'pan':
             _, x, y, ox, oy = self.drag
             self.offset = [ox+e.x-x, oy+e.y-y]
+        elif self.drag[0] == 'eye_direction' and self.inside(self.point(e)):
+            _, i, j = self.drag
+            face = self.ai_data['faces'][i]
+            face['eye_rays'][j][1] = list(self.point(e))
+            face['per_eye_note'] = 'Direction manually edited; no longer raw AI output.'
+            self.ray_source = 'AI + manual eye direction'
         elif self.drag[0] == 'eye' and self.inside(self.point(e)):
             _, i, j = self.drag
             face = self.ai_data['faces'][i]
             old = [sum(eye[k] for eye in face['eyes'])/2 for k in (0, 1)]
+            old_eye = face['eyes'][j][:]
             face['eyes'][j] = list(self.point(e))
+            eye_ray = face.get('eye_rays', [None, None])[j]
+            if eye_ray:
+                face['eye_rays'][j] = [[p[k]+face['eyes'][j][k]-old_eye[k] for k in (0, 1)] for p in eye_ray]
+                face['per_eye_note'] = 'Eye origin manually moved; direction preserved.'
             face['eye_status'][j] = 'manually corrected'
             new = [sum(eye[k] for eye in face['eyes'])/2 for k in (0, 1)]
             if len(self.rays[i]) == 2:
@@ -261,6 +292,40 @@ class App:
         except (ValueError, tk.TclError):
             return 2.
 
+    def eye_overlay(self):
+        faces = (self.ai_data or {}).get('faces', [])
+        rays = [ray for face in faces for ray in face.get('eye_rays', [])]
+        polygon = cone_overlap(rays, self.degrees(), self.image.width, self.image.height) if len(rays) == 4 else []
+        return rays, polygon
+
+    def draw_eye_overlay(self):
+        rays, polygon = self.eye_overlay()
+        if polygon:
+            self.canvas.create_polygon(*[v for p in polygon for v in self.screen(p)],
+                                       fill='#a3e635', stipple='gray25', outline='#a3e635', width=1)
+        extent = math.hypot(self.image.width, self.image.height)*2
+        for i, face in enumerate(self.ai_data['faces']):
+            for j, ray in enumerate(face.get('eye_rays', [])):
+                if not ray or math.dist(*ray) < 1e-8:
+                    continue
+                variants = [(ray, False)]
+                if self.boundaries.get():
+                    variants += [(rotate(ray, d), True) for d in (-self.degrees(), self.degrees())]
+                for (a, b), boundary in variants:
+                    length = math.dist(a, b)
+                    end = [a[k]+(b[k]-a[k])*extent/length for k in (0, 1)]
+                    self.canvas.create_line(*self.screen(a), *self.screen(end), fill=COLORS[i],
+                                            width=1, dash=(3, 4) if boundary else ())
+                x, y = self.screen(ray[1])
+                self.canvas.create_oval(x-4, y-4, x+4, y+4, outline=COLORS[i])
+                self.canvas.create_text(x+7, y, text=f'P{i+1} eye {j+1}', fill=COLORS[i], anchor='w')
+        count = sum(bool(r) and math.dist(*r) >= 1e-8 for r in rays)
+        status = 'Shared region shaded green.' if polygon else 'No shared region inside the image.'
+        if count != 4:
+            status = 'Four valid eye directions required for shared-region analysis.'
+        self.result.set(f'{self.ray_source}: {count}/4 eye directions. {status} ±{self.degrees():g}° is adjustable '
+                        'image-plane tolerance, not confidence. Assumed camera; unvalidated ball location.')
+
     def draw(self):
         self.canvas.delete('all')
         if not self.image:
@@ -285,7 +350,7 @@ class App:
                     self.canvas.create_oval(x-4, y-4, x+4, y+4, outline=color, width=1)
                     if self.mode.get() == 'Edit eyes':
                         self.canvas.create_text(x, y-10, text=f'P{i+1} eye {j+1}', fill=color, anchor='s')
-        for i, ray in enumerate(self.rays):
+        for i, ray in enumerate([] if (self.ai_data or {}).get('per_eye_enabled') else self.rays):
             for j, p in enumerate(ray):
                 x, y = self.screen(p)
                 self.canvas.create_oval(x-5, y-5, x+5, y+5, fill=COLORS[i], outline='white')
@@ -300,7 +365,7 @@ class App:
                     self.canvas.create_line(*self.screen(a), *self.screen(end), fill=COLORS[i], width=2)
         p = self.estimate()
         self.result.set('Mark two eyes/direction pairs. Results are manual estimates.')
-        if all(len(r) == 2 for r in self.rays):
+        if not (self.ai_data or {}).get('per_eye_enabled') and all(len(r) == 2 for r in self.rays):
             if p is None:
                 self.result.set('No stable forward intersection: rays are parallel, nearly parallel, degenerate, or point apart.')
             else:
@@ -316,6 +381,8 @@ class App:
                     f'({"inside" if self.inside(p) else "OUTSIDE"} image). '
                     f'±{self.degrees():g}° sampled range: X {min(xs):.0f}–{max(xs):.0f}, '
                     f'Y {min(ys):.0f}–{max(ys):.0f}. Sensitivity only; not confidence or a verified ball location.')
+        if (self.ai_data or {}).get('per_eye_enabled'):
+            self.draw_eye_overlay()
         if self.clicked:
             x, y = self.screen(self.clicked)
             self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
@@ -338,9 +405,11 @@ class App:
             return
         path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[('JSON', '*.json')])
         if path:
-            data = dict(schema_version=1, image_name=self.path.replace('\\', '/').split('/')[-1],
+            data = dict(schema_version=2,
+                        per_eye_overlap=self.eye_overlay()[1] if (self.ai_data or {}).get('per_eye_enabled') else None,
+                        tolerance_is_confidence=False, image_name=self.path.replace('\\', '/').split('/')[-1],
                         width=self.image.width, height=self.image.height, rays=self.rays,
-                        estimated_intersection=self.estimate(), sensitivity_degrees=self.degrees(),
+                        estimated_intersection=None if (self.ai_data or {}).get('per_eye_enabled') else self.estimate(), sensitivity_degrees=self.degrees(),
                         method=self.ray_source + ' gaze rays; unvalidated estimate', ai_analysis=self.ai_data, game_mapping_verified=False)
             try:
                 with open(path, 'w', encoding='utf-8') as f:

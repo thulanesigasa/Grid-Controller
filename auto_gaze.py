@@ -1,5 +1,6 @@
 """Optional local face/eye detection and model-based gaze suggestions."""
 import math
+import copy
 
 
 def projected_ray(origin, pitch, yaw, length):
@@ -44,6 +45,8 @@ def refine_eyes(coarse, landmarks, score, box):
 class AutoGaze:
     def __init__(self):
         try:
+            import onnxruntime
+            onnxruntime.disable_telemetry_events()
             from uniface.detection import RetinaFace
             from uniface.gaze import MobileGaze
             from uniface.constants import GazeWeights
@@ -55,7 +58,7 @@ class AutoGaze:
         self.eye_warning = None
         self.estimator = MobileGaze(model_name=GazeWeights.RESNET34, providers=['CPUExecutionProvider'])
 
-    def analyse(self, image):
+    def analyse(self, image, per_eye=False):
         import cv2
         import numpy as np
         if self.eye_mesh is None and self.eye_warning is None:
@@ -95,16 +98,29 @@ class AutoGaze:
         candidates.sort(key=lambda item: (item[1][2]-item[1][0])*(item[1][3]-item[1][1]), reverse=True)
         count = len(candidates)
         selected = sorted(candidates[:2], key=lambda item: item[1][0])
+        eye_engine = None
+        if per_eye and selected:
+            from per_eye import PerEyeGaze
+            eye_engine = getattr(self, 'per_eye_engine', None)
+            if eye_engine is None or eye_engine.size != (width, height):
+                if eye_engine is not None:
+                    eye_engine.close()
+                self.per_eye_engine = None
+                eye_engine = self.per_eye_engine = PerEyeGaze(width, height)
         results = []
         for face, box, eyes in selected:
             x1, y1, x2, y2 = box
             coarse_eyes = eyes.copy()
             eye_status = ['coarse fallback']*2
             eye_warning = self.eye_warning
+            mesh_points = None
             if self.eye_mesh is not None:
                 try:
                     mesh = self.eye_mesh.predict(bgr, bboxes=[np.asarray(box)], keypoints=[eyes])[0]
                     eyes, eye_status = refine_eyes(eyes, mesh.landmarks, mesh.score, box)
+                    pts = np.asarray(mesh.landmarks)
+                    if mesh.score >= .8 and pts.shape[0] >= 468 and np.isfinite(pts[:468, :2]).all():
+                        mesh_points = pts[:468, :2]
                 except Exception as exc:
                     eye_warning = 'Iris refinement failed: ' + str(exc)
             prediction = self.estimator.estimate(bgr[y1:y2, x1:x2])
@@ -114,6 +130,14 @@ class AutoGaze:
             results.append(dict(box=list(box), eyes=eyes.tolist(), coarse_eyes=coarse_eyes.tolist(),
                                 eye_status=eye_status, eye_warning=eye_warning, ray=ray,
                                 pitch_radians=pitch, yaw_radians=yaw))
-        return dict(faces=results, detected_count=count, model='UniFace 4.1.0 / MobileGaze ResNet34',
+            if eye_engine is not None:
+                try:
+                    rays, warning = eye_engine.analyse_face(bgr, box, mesh_points, eyes)
+                except Exception as exc:
+                    rays, warning = [None, None], 'Per-eye inference failed: ' + str(exc)
+                results[-1].update(eye_rays=rays, raw_eye_rays=copy.deepcopy(rays), per_eye_note=warning)
+        return dict(faces=results, detected_count=count, per_eye_enabled=per_eye,
+                    per_eye_model='ptgaze MPIIGaze ResNet preact' if per_eye else None,
+                    camera='assumed focal length=image width; principal point=image centre; zero distortion' if per_eye else None, model='UniFace 4.1.0 / MobileGaze ResNet34',
                     projection='uncalibrated 2D projection of estimated gaze',
                     selection='two largest usable faces, ordered left to right')

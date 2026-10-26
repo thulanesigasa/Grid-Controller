@@ -83,3 +83,31 @@ White eye rings indicate accepted refinement (or manual correction); yellow ring
 To correct an individual eye, select **Edit eyes**, zoom in, and drag its small ring onto the visible iris centre. The labels `eye 1` and `eye 2` follow image-left/image-right order, avoiding anatomical left/right ambiguity. The gaze origin and endpoint move together, preserving the current line angle. Raw coarse landmarks, refined/corrected coordinates and per-eye status are included in JSON export.
 
 On the supplied photo, the iris refinement was compared visually against the previous coarse markers on full-resolution face crops and the complete pipeline accepted all four iris estimates. This is a qualitative check on one image, not a measured accuracy benchmark. Blur, occlusion and extreme gaze can still cause errors; increasing zoom does not recover missing image detail.
+
+## Separate gaze direction for each eye (experimental)
+
+Close the app and install the optional backend in PowerShell (Python 3.11/3.12):
+
+```powershell
+git pull --ff-only origin main
+.venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv\Scripts\python -m pip install -r requirements-per-eye.txt
+.venv\Scripts\python app.py
+```
+
+This installs a pinned version of [ptgaze](https://github.com/hysts/pytorch_mpiigaze_demo), with its MPIIGaze ResNet preact model. Git must be installed. PyTorch and the additional dependencies are a substantial download; model weights download on first use. The default face-level mode continues to work without this extra installation.
+
+1. Open a photograph, check **Per-eye AI (experimental)**, then click **Analyse image (AI)**. The checkbox selects the next analysis mode; changing it alone does not replace existing results.
+2. Each usable eye receives its own solid **1-screen-pixel** ray, estimated from its separately normalized grayscale eye crop and head pose. Cyan is Player 1, orange is Player 2. These are not copies of the face-level direction.
+3. Toggle **Boundary lines** for two thin dashed lines at ± the angle setting around each eye's central ray. Boundaries start at the iris, not the eyelid corners: eye width does not define gaze uncertainty. The angle is an adjustable image-plane tolerance, not a measured confidence interval.
+4. A green region shows where all four forward cones overlap within the image. Missing directions, disagreement or zero tolerance produce no shared area; the tool does not force an intersection. One player alone cannot produce a four-eye region.
+5. Select **Eye directions** to drag individual endpoint circles. **Edit eyes** moves iris origins while preserving their directions. To return to face-level analysis, uncheck Per-eye AI and analyse again.
+6. Export JSON schema 2 includes per-eye directions, model/camera assumptions and the shared-region polygon in original-image coordinates. The face-level estimated intersection is null in per-eye mode to avoid presenting it as the four-eye result.
+
+The photograph's camera calibration is unknown. This backend assumes focal length equal to image width, an image-centred principal point and zero lens distortion; it uses a generic face model. Eye predictions share head pose and a trained model, so their errors are correlated. Four lines do not mean four independent measurements or proven higher accuracy. Sports photographs may differ substantially from training images. No ball detector or ground-truth validation has been added.
+
+Model code and model details: [ptgaze](https://github.com/hysts/pytorch_mpiigaze_demo), [MPIIGaze weights](https://huggingface.co/hysts/ptgaze-mpiigaze-resnet-preact). Review upstream model/data terms for your use. Missing mesh, unstable projection and inference errors leave directions unavailable and are reported in the status/export instead of being replaced with duplicate face rays.
+
+### Per-eye validation status
+
+Geometry/projection and per-eye editing tests pass, including a known shared target, diverging cones, missing rays, image bounds and preserving direction when moving an iris. End-to-end per-eye inference and Windows desktop interaction have **not yet been validated**. The development environment lacked MediaPipe's native `libGLESv2.so.2`; Linux may need its distribution's GLES package (for example `libgles2` on Debian/Ubuntu). Automatic approval review also stopped an unexpected telemetry request during the full-photo test. ONNX Runtime telemetry is now explicitly disabled before creating inference sessions; the photo test was not retried. These implementation checks do not measure gaze or ball-location accuracy.
