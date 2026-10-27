@@ -223,3 +223,19 @@ scores fell below the 0.5 display gate, so no region was displayed. This is an
 integration check, not evidence of improved accuracy. Automatic head proposals
 were not rerun on that photograph; Windows UI interaction remains unverified.
 Missing xFormers warnings are expected for the CPU path; it is not required.
+
+
+## Simplified workspace
+
+Choose one tab: **Scene AI** for looking-region heatmaps, **Eye lines** for face
+or per-eye direction estimates, or **Manual** to draw your own two lines.
+Only that method's controls appear. Each tab retains its current result while
+you compare methods; opening a different photograph clears all three results.
+Switching methods waits until any running analysis finishes.
+
+**Show validation & export tools** opens the optional known-ball validation,
+JSON export, image dimensions, and coordinate comparison controls. These start
+collapsed. **Select a point** records a comparison point; **Move photo** pans.
+Scrolling zooms and right-dragging pans in every mode. **Clear current result**
+clears the active method and validation. No prediction models changed with this
+layout update.

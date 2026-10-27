@@ -39,7 +39,7 @@ class App:
         self.info = tk.StringVar(value='Open an original photograph to begin.')
         self.result = tk.StringVar(value='Manual estimate • no gaze model is running')
         self.cursor = tk.StringVar(value='Image coordinates: —')
-        self.check = tk.StringVar(value='Click in Inspect mode to record a comparison point.')
+        self.check = tk.StringVar(value='Choose Select a point and click the photo to record a comparison point.')
         self.clicked = None
         self.validation_snapshot = None
         self.validation_target = None
@@ -48,39 +48,55 @@ class App:
         ttk.Label(bar, text='GRID CONTROLLER', font=('', 15, 'bold')).pack(side='left', padx=(0, 20))
         for label, command in [('Open image', self.open_image), ('Fit', self.fit),
                                ('Zoom +', lambda: self.zoom(1.25)), ('Zoom −', lambda: self.zoom(.8)),
-                               ('Reset lines', self.reset), ('Export JSON', self.export)]:
+                               ('Clear current result', self.reset)]:
             ttk.Button(bar, text=label, command=command).pack(side='left', padx=3)
-        ai_bar = ttk.Frame(root, padding=(10, 3))
-        ai_bar.pack(fill='x')
-        self.ai_button = ttk.Button(ai_bar, text='Analyse image (AI)', command=self.analyse_image)
-        self.ai_button.pack(side='left', padx=3)
-        ttk.Checkbutton(ai_bar, text='Per-eye AI (experimental)', variable=self.per_eye).pack(side='left')
-        ttk.Checkbutton(ai_bar, text='Boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
-        self.ai_status = tk.StringVar(value='AI is optional. First run downloads models; photos stay on this computer.')
-        ttk.Label(ai_bar, textvariable=self.ai_status, padding=(10, 3), wraplength=600).pack(side='left')
-        scene_bar = ttk.Frame(root, padding=(10, 3))
-        scene_bar.pack(fill='x')
-        self.scene_button = ttk.Button(scene_bar, text='Analyse scene (AI)', command=self.analyse_scene)
+        self.workflow = 'Scene AI'
+        self.workflow_results = {}
+        self.mode.set('Inspect')
+        self.ai_status = tk.StringVar(value='Open a photo, then choose Analyse scene. You can correct head boxes if needed.')
+        self.tabs = ttk.Notebook(root)
+        self.tabs.pack(fill='x', padx=10, pady=(0, 4))
+        scene_bar = ttk.Frame(self.tabs, padding=8)
+        ai_bar = ttk.Frame(self.tabs, padding=8)
+        manual_bar = ttk.Frame(self.tabs, padding=8)
+        for frame, title in ((scene_bar, 'Scene AI'), (ai_bar, 'Eye lines'), (manual_bar, 'Manual')):
+            self.tabs.add(frame, text=title)
+        self.tabs.bind('<<NotebookTabChanged>>', self.change_workflow)
+        self.scene_button = ttk.Button(scene_bar, text='Analyse scene', command=self.analyse_scene)
         self.scene_button.pack(side='left')
         for head in ('Head 1', 'Head 2'):
-            ttk.Radiobutton(scene_bar, text=head, variable=self.mode, value=head).pack(side='left', padx=5)
-        ttk.Button(scene_bar, text='Auto head boxes', command=self.clear_heads).pack(side='left')
-        ttk.Label(scene_bar, text='Heatmap:').pack(side='left', padx=(10, 3))
+            ttk.Radiobutton(scene_bar, text='Set '+head.lower(), variable=self.mode, value=head,
+                            command=self.update_help).pack(side='left', padx=5)
+        ttk.Button(scene_bar, text='Use automatic heads', command=self.clear_heads).pack(side='left', padx=5)
+        ttk.Label(scene_bar, text='Show:').pack(side='left', padx=(10, 3))
         view = ttk.Combobox(scene_bar, textvariable=self.scene_view, values=['Both', 'P1', 'P2', 'Hidden'], state='readonly', width=8)
         view.pack(side='left')
         view.bind('<<ComboboxSelected>>', lambda e: self.draw())
-        ttk.Label(scene_bar, text='Head boxes: click two opposite corners; then Analyse scene.').pack(side='left', padx=8)
-        ttk.Label(root, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
-        controls = ttk.Frame(root, padding=10)
-        controls.pack(fill='x')
-        for mode in ('Player 1', 'Player 2', 'Edit eyes', 'Eye directions', 'Inspect', 'Pan'):
-            ttk.Radiobutton(controls, text=mode, variable=self.mode, value=mode, command=self.draw).pack(side='left', padx=8)
-        ttk.Label(controls, text='Angle sensitivity ± degrees:').pack(side='left', padx=(20, 5))
-        ttk.Spinbox(controls, from_=0, to=15, increment=.5, width=5,
+        self.ai_button = ttk.Button(ai_bar, text='Analyse eye lines', command=self.analyse_image)
+        self.ai_button.pack(side='left')
+        ttk.Checkbutton(ai_bar, text='Separate eyes (experimental)', variable=self.per_eye).pack(side='left', padx=8)
+        for mode, label in (('Edit eyes', 'Adjust eye positions'), ('Eye directions', 'Adjust directions')):
+            ttk.Radiobutton(ai_bar, text=label, variable=self.mode, value=mode,
+                            command=self.update_help).pack(side='left', padx=5)
+        for mode in ('Player 1', 'Player 2'):
+            ttk.Radiobutton(manual_bar, text='Draw '+mode.lower()+' line', variable=self.mode, value=mode,
+                            command=self.update_help).pack(side='left', padx=5)
+        self.line_settings = ttk.Frame(root, padding=(10, 3))
+        ttk.Checkbutton(self.line_settings, text='Show boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
+        ttk.Label(self.line_settings, text='Angle sensitivity ± degrees:').pack(side='left', padx=(15, 5))
+        ttk.Spinbox(self.line_settings, from_=0, to=15, increment=.5, width=5,
                     textvariable=self.angle, command=self.draw).pack(side='left')
-        ttk.Button(controls, text='Apply', command=self.draw).pack(side='left', padx=5)
-        ttk.Label(root, text='For each player: click the eyes, then click the estimated gaze direction. '
-                  'Drag either handle to refine. Scroll to zoom; right-drag to pan.', padding=10).pack(anchor='w')
+        ttk.Button(self.line_settings, text='Apply', command=self.draw).pack(side='left', padx=5)
+        self.help_text = tk.StringVar(value='Analyse scene estimates looking regions. Optional: set each head box with two corner clicks.')
+        self.help_label = ttk.Label(root, textvariable=self.help_text, padding=(10, 3), wraplength=1100)
+        self.help_label.pack(anchor='w')
+        nav = ttk.Frame(root, padding=(10, 3))
+        nav.pack(fill='x')
+        for mode, label in (('Inspect', 'Select a point'), ('Pan', 'Move photo')):
+            ttk.Radiobutton(nav, text=label, variable=self.mode, value=mode,
+                            command=self.update_help).pack(side='left', padx=(0, 10))
+        ttk.Label(nav, text='Scroll to zoom · Right-drag to move photo').pack(side='left')
+        ttk.Label(root, textvariable=self.ai_status, padding=(10, 3), wraplength=1100).pack(anchor='w')
         self.canvas = tk.Canvas(root, bg='#111827', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, padx=10)
         self.canvas.bind('<Button-1>', self.down)
@@ -96,7 +112,14 @@ class App:
         self.canvas.bind('<Configure>', lambda e: self.draw())
         ttk.Label(root, textvariable=self.cursor, padding=(10, 4)).pack(anchor='w')
         ttk.Label(root, textvariable=self.result, padding=(10, 4), wraplength=1150).pack(anchor='w')
-        validation_bar = ttk.Frame(root, padding=(10, 4))
+        self.details_button = ttk.Button(root, text='Show validation & export tools', command=self.toggle_details)
+        self.details_button.pack(anchor='w', padx=10, pady=4)
+        self.details = ttk.Frame(root)
+        self.details_visible = False
+        ttk.Label(self.details, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
+        ttk.Button(self.details, text='Export current analysis JSON', command=self.export).pack(anchor='w', padx=10)
+        ttk.Label(self.details, text='Validation — use only when the ball position is known.', padding=(10, 4)).pack(anchor='w')
+        validation_bar = ttk.Frame(self.details, padding=(10, 4))
         validation_bar.pack(fill='x')
         ttk.Button(validation_bar, text='Freeze prediction', command=self.freeze_validation).pack(side='left')
         ttk.Radiobutton(validation_bar, text='Mark known ball', variable=self.mode, value='Mark ball').pack(side='left', padx=6)
@@ -107,8 +130,8 @@ class App:
         ttk.Entry(validation_bar, textvariable=self.validation_group, width=14).pack(side='left')
         ttk.Button(validation_bar, text='Save validation JSON', command=self.save_validation).pack(side='left', padx=6)
         self.validation_status = tk.StringVar(value='Validation: freeze a prediction before marking a visible ball. No training runs automatically.')
-        ttk.Label(root, textvariable=self.validation_status, padding=(10, 3), wraplength=1150).pack(anchor='w')
-        panel = ttk.Frame(root, padding=10)
+        ttk.Label(self.details, textvariable=self.validation_status, padding=(10, 3), wraplength=1150).pack(anchor='w')
+        panel = ttk.Frame(self.details, padding=10)
         panel.pack(fill='x')
         ttk.Label(panel, text='Game comparison: X').pack(side='left')
         self.gx, self.gy = tk.StringVar(), tk.StringVar()
@@ -116,7 +139,59 @@ class App:
         ttk.Label(panel, text='Y').pack(side='left')
         ttk.Entry(panel, textvariable=self.gy, width=9).pack(side='left', padx=5)
         ttk.Button(panel, text='Compare selected point', command=self.compare).pack(side='left')
-        ttk.Label(root, textvariable=self.check, padding=(10, 0, 10, 10)).pack(anchor='w')
+        ttk.Label(self.details, textvariable=self.check, padding=(10, 0, 10, 10)).pack(anchor='w')
+
+    def toggle_details(self):
+        self.details_visible = not self.details_visible
+        if self.details_visible:
+            self.details.pack(fill='x')
+        else:
+            self.details.pack_forget()
+            if self.mode.get() == 'Mark ball':
+                self.mode.set('Inspect')
+                self.update_help()
+        self.details_button.configure(text=('Hide' if self.details_visible else 'Show')+' validation & export tools')
+
+    def change_workflow(self, event=None):
+        selected = self.tabs.tab(self.tabs.select(), 'text')
+        if selected == self.workflow:
+            return
+        if self.ai_busy:
+            self.tabs.select(('Scene AI', 'Eye lines', 'Manual').index(self.workflow))
+            self.ai_status.set('Wait for the current analysis to finish before switching methods.')
+            return
+        self.workflow_results[self.workflow] = (self.ai_data, self.rays, self.ray_source)
+        self.workflow = selected
+        self.ai_data, self.rays, self.ray_source = self.workflow_results.get(selected, (None, [[], []], 'Manual'))
+        self.pending_head = None
+        self.drag = None
+        self.scene_overlay_cache = None
+        self.mode.set('Player 1' if selected == 'Manual' else 'Inspect')
+        self.line_settings.pack_forget()
+        if selected != 'Scene AI':
+            self.line_settings.pack(fill='x', before=self.help_label)
+        self.ai_status.set('Previous result restored.' if self.ai_data or any(self.rays) else 'Ready. '+
+                           ('Draw a line for each player.' if selected == 'Manual' else 'Run analysis to get a suggestion.'))
+        self.update_help()
+
+    def update_help(self):
+        mode = self.mode.get()
+        if mode.startswith('Head '):
+            text = 'Click two opposite corners around the entire head, including hair. Then choose Analyse scene.'
+        elif mode.startswith('Player '):
+            text = 'Click the eyes, then a point in the estimated looking direction. Drag either handle to adjust.'
+        elif mode == 'Edit eyes':
+            text = 'Drag an eye marker to correct its position. This does not retrain the model.'
+        elif mode == 'Eye directions':
+            text = 'Drag an eye direction handle to adjust the suggested line.'
+        elif mode == 'Pan':
+            text = 'Drag the photograph to move it. Scroll to zoom.'
+        else:
+            text = {'Scene AI': 'Analyse scene estimates looking regions. Cyan = player 1; orange = player 2; green = shared region.',
+                    'Eye lines': 'Analyse eye lines suggests gaze directions. Adjust markers or directions after analysis.',
+                    'Manual': 'Choose a player to draw their estimated looking direction.'}[self.workflow]
+        self.help_text.set(text)
+        self.draw()
 
     def analyse_image(self):
         if self.image is None:
@@ -191,7 +266,9 @@ class App:
     def clear_heads(self):
         self.head_boxes = [None, None]
         self.pending_head = None
-        self.ai_status.set('Automatic head proposals selected for the next scene analysis.')
+        self.mode.set('Inspect')
+        self.update_help()
+        self.ai_status.set('Automatic head proposals selected. Click Analyse scene.')
         self.draw()
 
     def analyse_scene(self):
@@ -200,7 +277,7 @@ class App:
         if self.ai_busy:
             return
         if self.pending_head is not None:
-            return self.ai_status.set('Finish the head box with a second click, or choose Auto head boxes.')
+            return self.ai_status.set('Finish the head box with a second click, or choose Use automatic heads.')
         boxes = [b[:] for b in self.head_boxes if b is not None] or None
         if boxes and self.head_boxes[0] is None:
             return self.ai_status.set('Draw Head 1 first. A single-head analysis uses P1.')
@@ -246,6 +323,7 @@ class App:
         except Exception as exc:
             messagebox.showerror('Cannot open image', str(exc))
             return
+        self.workflow_results = {}
         self.path, self.rays, self.clicked = path, [[], []], None
         self.clear_validation()
         self.head_boxes = [None, None]
@@ -253,7 +331,7 @@ class App:
         self.scene_overlay_cache = None
         self.ai_data = None
         self.ray_source = "Manual"
-        self.check.set('Click in Inspect mode to record a comparison point.')
+        self.check.set('Choose Select a point and click the photo to record a comparison point.')
         self.info.set(f'{self.image.width:,} × {self.image.height:,} original pixels • '
                       'origin: top left • X right, Y down • no automatic rotation')
         self.fit()
@@ -299,7 +377,7 @@ class App:
             self.draw()
             return
         if self.scene_active() and self.mode.get() not in ('Inspect', 'Mark ball'):
-            self.check.set('Scene heatmaps cannot be edited as rays. Use Head 1 / Head 2 and analyse again, or run Analyse image for ray mode.')
+            self.check.set('Scene heatmaps cannot be edited as rays. Use Head 1 / Head 2 and analyse again, or switch to Eye lines.')
             return
         if self.mode.get() == 'Mark ball':
             if self.validation_snapshot is None:
@@ -520,7 +598,7 @@ class App:
             scores = ', '.join(f"P{i+1} in-frame score {p['in_frame_score']:.2f}" for i, p in enumerate(people))
             support = 'Shared high-activation cells shown in green.' if self.ai_data['shared_cell_count'] else 'No shared high-activation region.'
             self.result.set(f'Scene gaze: {scores}. {support} Scores are uncalibrated; 64×64 heatmaps, not exact ball coordinates.')
-        for i, box in enumerate(self.head_boxes):
+        for i, box in enumerate(self.head_boxes if self.workflow == 'Scene AI' else []):
             if box:
                 self.canvas.create_rectangle(*self.screen(box[:2]), *self.screen(box[2:]), outline=COLORS[i], width=2)
                 self.canvas.create_text(*self.screen(box[:2]), text=f'Head {i+1} (next analysis)', fill=COLORS[i], anchor='sw')
