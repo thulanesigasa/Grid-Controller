@@ -192,3 +192,23 @@ coordinate comparison have been removed from the app. **Select a point** shows
 its original-image coordinates. **Move photo** pans. Scrolling zooms and
 right-dragging pans in every mode. **Clear current result** clears the active
 method. No prediction models changed with this cleanup.
+
+
+## Linked scene and eye analysis
+
+Run **Analyse scene**, then select **Eye lines**. The first visit automatically
+runs eye analysis using the heads from the completed scene scan. Detected faces
+are matched one-to-one to those heads in the same player order; an unmatched head
+produces an error instead of silently substituting another person. Eye detection
+still runs to obtain eye landmarks: a head rectangle is not an eye measurement.
+Usable scene heatmaps remain behind the eye lines. Re-running scene analysis
+invalidates the previous eye result so the next visit recomputes it.
+
+The models share selected people and the display, not learned predictions.
+A scene map below the display threshold stays hidden even if eye lines exist.
+Disagreement is not resolved by forcing lines to meet. **Adjust directions** now
+supports both the default face ray and separate-eye rays: drag the endpoint
+circle. Use **Fit** if the endpoint is outside the zoomed viewport.
+
+Linked-head matching and direction editing are covered by automated tests.
+Full face-model inference on the photo was not repeated for this change.

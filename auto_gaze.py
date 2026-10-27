@@ -42,6 +42,28 @@ def refine_eyes(coarse, landmarks, score, box):
     return eyes, status
 
 
+def match_heads(candidates, head_boxes):
+    """Match detected faces one-to-one to selected heads, preserving player order."""
+    from itertools import permutations
+    if not 1 <= len(head_boxes) <= 2:
+        raise ValueError('Select one or two heads.')
+    def score(candidate, head):
+        x1, y1, x2, y2 = candidate[1]
+        a, b, c, d = head
+        cx, cy = (x1+x2)/2, (y1+y2)/2
+        overlap = max(0, min(x2,c)-max(x1,a))*max(0, min(y2,d)-max(y1,b))
+        coverage = overlap/((x2-x1)*(y2-y1))
+        return coverage if a <= cx <= c and b <= cy <= d and coverage >= .5 else None
+    best, best_score = None, -1
+    for indices in permutations(range(len(candidates)), len(head_boxes)):
+        scores = [score(candidates[i], head) for i, head in zip(indices, head_boxes)]
+        if all(v is not None for v in scores) and sum(scores) > best_score:
+            best, best_score = indices, sum(scores)
+    if best is None:
+        raise ValueError('Could not detect eyes for every selected head. Correct the head boxes or use a clearer photograph; player identities were not reassigned.')
+    return [candidates[i] for i in best]
+
+
 class AutoGaze:
     def __init__(self):
         try:
@@ -58,7 +80,7 @@ class AutoGaze:
         self.eye_warning = None
         self.estimator = MobileGaze(model_name=GazeWeights.RESNET34, providers=['CPUExecutionProvider'])
 
-    def analyse(self, image, per_eye=False):
+    def analyse(self, image, per_eye=False, head_boxes=None):
         import cv2
         import numpy as np
         if self.eye_mesh is None and self.eye_warning is None:
@@ -97,7 +119,8 @@ class AutoGaze:
             candidates.append((face, (x1, y1, x2, y2), eyes))
         candidates.sort(key=lambda item: (item[1][2]-item[1][0])*(item[1][3]-item[1][1]), reverse=True)
         count = len(candidates)
-        selected = sorted(candidates[:2], key=lambda item: item[1][0])
+        selected = (match_heads(candidates, head_boxes) if head_boxes is not None
+                    else sorted(candidates[:2], key=lambda item: item[1][0]))
         eye_engine = None
         if per_eye and selected:
             from per_eye import PerEyeGaze
@@ -140,4 +163,5 @@ class AutoGaze:
                     per_eye_model='ptgaze MPIIGaze ResNet preact' if per_eye else None,
                     camera='assumed focal length=image width; principal point=image centre; zero distortion' if per_eye else None, model='UniFace 4.1.0 / MobileGaze ResNet34',
                     projection='uncalibrated 2D projection of estimated gaze',
-                    selection='two largest usable faces, ordered left to right')
+                    head_boxes=head_boxes,
+                    selection='matched to scene heads in player order' if head_boxes is not None else 'two largest usable faces, ordered left to right')

@@ -129,6 +129,8 @@ class App:
         self.ai_status.set('Previous result restored.' if self.ai_data or any(self.rays) else 'Ready. '+
                            ('Draw a line for each player.' if selected == 'Manual' else 'Run analysis to get a suggestion.'))
         self.update_help()
+        if selected == 'Eye lines' and self.ai_data is None and self.workflow_results.get('Scene AI', (None,))[0]:
+            self.analyse_image()
 
     def update_help(self):
         mode = self.mode.get()
@@ -162,12 +164,19 @@ class App:
         snapshot = source_image.copy()
         original_rays = self.analysis_state()
         use_per_eye = self.per_eye.get()
+        scene = self.workflow_results.get('Scene AI', (None,))[0]
+        head_boxes = [list(p['box']) for p in scene['people']] if scene else None
+        if scene:
+            self.ai_status.set('Finding eyes inside the selected scene heads; keeping player 1 / player 2 identities.')
         def work():
             try:
                 from auto_gaze import AutoGaze
                 if self.ai_engine is None:
                     self.ai_engine = AutoGaze()
-                self.ai_queue.put((source_image, original_rays, self.ai_engine.analyse(snapshot, per_eye=use_per_eye), None))
+                data = self.ai_engine.analyse(snapshot, per_eye=use_per_eye, head_boxes=head_boxes)
+                if scene:
+                    data['scene_context'] = scene
+                self.ai_queue.put((source_image, original_rays, data, None))
             except Exception as exc:
                 self.ai_queue.put((source_image, original_rays, None, str(exc)))
         threading.Thread(target=work, daemon=True).start()
@@ -195,6 +204,7 @@ class App:
         self.drag = None
         self.scene_overlay_cache = None
         if data.get('scene_enabled'):
+            self.workflow_results.pop('Eye lines', None)
             self.ray_source = 'Scene gaze AI'
             self.rays = [[], []]
             self.ai_status.set('Scene model ready. Cyan=P1, orange=P2, green=shared high activation. '
@@ -206,11 +216,13 @@ class App:
         self.rays += [[] for _ in range(2-len(self.rays))]
         self.angle.set(10.)
         self.ai_status.set(f"Found {data['detected_count']} usable faces; using {len(data['faces'])}, "
-                           'largest first, P1 on the left. Review the boxes and lines. '
+                           f"{data.get('selection', 'detected faces')}. Review the boxes and lines. "
                            'Missing lines mean the projected direction is unstable. ±10° is a sensitivity setting, not confidence.')
         refined = sum(s == 'iris refined' for f in data['faces'] for s in f.get('eye_status', []))
         total = 2*len(data['faces'])
         self.ai_status.set(self.ai_status.get() + f' Iris refinement: {refined}/{total}; yellow rings are coarse fallback. Use Edit eyes to correct rings.')
+        if data.get('scene_context'):
+            self.ai_status.set(self.ai_status.get() + ' Scene heads reused. Heatmaps and rays remain separate estimates; no forced agreement.')
         if data.get('per_eye_enabled'):
             self.ai_status.set('Per-eye model: assumed camera calibration. Drag endpoint circles in Eye directions mode. '
                                + ' '.join(f"P{i+1}: {f.get('per_eye_note', '')}" for i, f in enumerate(data['faces'])))
@@ -333,6 +345,14 @@ class App:
             self.ai_status.set('Scene heatmaps cannot be edited as rays. Use Head 1 / Head 2 and analyse again, or switch to Eye lines.')
             return
         if self.mode.get() == 'Eye directions':
+            if not (self.ai_data or {}).get('per_eye_enabled'):
+                handles = [(math.dist(self.screen(ray[1]), (e.x, e.y)), i)
+                           for i, ray in enumerate(self.rays) if len(ray) == 2]
+                if handles:
+                    distance, i = min(handles)
+                    if distance < 14:
+                        self.drag = ('handle', i, 1)
+                return
             handles = [(math.dist(self.screen(ray[1]), (e.x, e.y)), i, j)
                        for i, face in enumerate((self.ai_data or {}).get('faces', []))
                        for j, ray in enumerate(face.get('eye_rays', [])) if ray]
@@ -421,6 +441,8 @@ class App:
         self.rays = [[], []]
         self.ai_data = None
         self.ray_source = "Manual"
+        if self.workflow == 'Scene AI':
+            self.workflow_results.pop('Eye lines', None)
         self.draw()
 
     def estimate(self):
@@ -479,11 +501,12 @@ class App:
         visible = self.image.transform((w, h), Image.Transform.AFFINE,
             (1/self.scale, 0, -ox/self.scale, 0, 1/self.scale, -oy/self.scale),
             resample=Image.Resampling.BILINEAR, fillcolor='#111827')
-        if self.scene_active() and self.scene_view.get() != 'Hidden':
+        scene_layer = self.ai_data if self.scene_active() else (self.ai_data or {}).get('scene_context')
+        if scene_layer and self.scene_view.get() != 'Hidden':
             from scene_gaze import overlay_image
-            key = (id(self.ai_data), self.scene_view.get())
+            key = (id(scene_layer), self.scene_view.get())
             if self.scene_overlay_cache is None or self.scene_overlay_cache[0] != key:
-                self.scene_overlay_cache = (key, overlay_image(self.ai_data['people'], self.scene_view.get()))
+                self.scene_overlay_cache = (key, overlay_image(scene_layer['people'], self.scene_view.get()))
             heat = self.scene_overlay_cache[1].transform((w, h), Image.Transform.AFFINE,
                 (64/(self.scale*self.image.width), 0, -ox*64/(self.scale*self.image.width),
                  0, 64/(self.scale*self.image.height), -oy*64/(self.scale*self.image.height)),
