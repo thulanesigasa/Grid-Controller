@@ -24,6 +24,11 @@ class App:
         self.drag = None
         self.ai_queue = queue.Queue()
         self.ai_busy = False
+        self.scene_engine = None
+        self.head_boxes = [None, None]
+        self.pending_head = None
+        self.scene_overlay_cache = None
+        self.scene_view = tk.StringVar(value="Both")
         self.ai_engine = None
         self.ai_data = None
         self.ray_source = "Manual"
@@ -53,6 +58,18 @@ class App:
         ttk.Checkbutton(ai_bar, text='Boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
         self.ai_status = tk.StringVar(value='AI is optional. First run downloads models; photos stay on this computer.')
         ttk.Label(ai_bar, textvariable=self.ai_status, padding=(10, 3), wraplength=600).pack(side='left')
+        scene_bar = ttk.Frame(root, padding=(10, 3))
+        scene_bar.pack(fill='x')
+        self.scene_button = ttk.Button(scene_bar, text='Analyse scene (AI)', command=self.analyse_scene)
+        self.scene_button.pack(side='left')
+        for head in ('Head 1', 'Head 2'):
+            ttk.Radiobutton(scene_bar, text=head, variable=self.mode, value=head).pack(side='left', padx=5)
+        ttk.Button(scene_bar, text='Auto head boxes', command=self.clear_heads).pack(side='left')
+        ttk.Label(scene_bar, text='Heatmap:').pack(side='left', padx=(10, 3))
+        view = ttk.Combobox(scene_bar, textvariable=self.scene_view, values=['Both', 'P1', 'P2', 'Hidden'], state='readonly', width=8)
+        view.pack(side='left')
+        view.bind('<<ComboboxSelected>>', lambda e: self.draw())
+        ttk.Label(scene_bar, text='Head boxes: click two opposite corners; then Analyse scene.').pack(side='left', padx=8)
         ttk.Label(root, textvariable=self.info, padding=(10, 3)).pack(anchor='w')
         controls = ttk.Frame(root, padding=10)
         controls.pack(fill='x')
@@ -108,10 +125,11 @@ class App:
             return
         self.ai_busy = True
         self.ai_button.configure(state='disabled')
+        self.scene_button.configure(state='disabled')
         self.ai_status.set('Loading AI / analysing… First run needs internet to download model weights.')
         source_image = self.image
         snapshot = source_image.copy()
-        original_rays = json.dumps([self.rays, self.ai_data])
+        original_rays = self.analysis_state()
         use_per_eye = self.per_eye.get()
         def work():
             try:
@@ -132,7 +150,8 @@ class App:
             return
         self.ai_busy = False
         self.ai_button.configure(state='normal')
-        if source_image is not self.image or original_rays != json.dumps([self.rays, self.ai_data]):
+        self.scene_button.configure(state='normal')
+        if source_image is not self.image or original_rays != self.analysis_state():
             self.ai_status.set('Image or lines changed during analysis. Results discarded; analyse again when ready.')
             return
         if error:
@@ -142,6 +161,15 @@ class App:
             self.ai_status.set('No usable faces/eye landmarks detected. Try an original-resolution image or manual lines.')
             return
         self.ai_data = data
+        self.drag = None
+        self.scene_overlay_cache = None
+        if data.get('scene_enabled'):
+            self.ray_source = 'Scene gaze AI'
+            self.rays = [[], []]
+            self.ai_status.set('Scene model ready. Cyan=P1, orange=P2, green=shared high activation. '
+                               'Head boxes are inputs; review them. No action prediction or measured confidence.')
+            self.draw()
+            return
         self.ray_source = 'Per-eye AI suggestion' if data.get('per_eye_enabled') else 'AI suggestion'
         self.rays = [face['ray'] or [] for face in data['faces']]
         self.rays += [[] for _ in range(2-len(self.rays))]
@@ -156,6 +184,47 @@ class App:
             self.ai_status.set('Per-eye model: assumed camera calibration. Drag endpoint circles in Eye directions mode. '
                                + ' '.join(f"P{i+1}: {f.get('per_eye_note', '')}" for i, f in enumerate(data['faces'])))
         self.draw()
+
+    def analysis_state(self):
+        return json.dumps([self.rays, self.ai_data, self.head_boxes, self.pending_head])
+
+    def clear_heads(self):
+        self.head_boxes = [None, None]
+        self.pending_head = None
+        self.ai_status.set('Automatic head proposals selected for the next scene analysis.')
+        self.draw()
+
+    def analyse_scene(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph first.')
+        if self.ai_busy:
+            return
+        if self.pending_head is not None:
+            return self.ai_status.set('Finish the head box with a second click, or choose Auto head boxes.')
+        boxes = [b[:] for b in self.head_boxes if b is not None] or None
+        if boxes and self.head_boxes[0] is None:
+            return self.ai_status.set('Draw Head 1 first. A single-head analysis uses P1.')
+        self.ai_busy = True
+        self.ai_button.configure(state='disabled')
+        self.scene_button.configure(state='disabled')
+        self.ai_status.set('Loading scene model / analysing on CPU. First run downloads a large backbone; this can take several minutes.')
+        source = self.image
+        snapshot = source.copy()
+        state = self.analysis_state()
+        def work():
+            try:
+                from scene_gaze import SceneGaze
+                if self.scene_engine is None:
+                    self.scene_engine = SceneGaze()
+                data = self.scene_engine.analyse(snapshot, boxes=boxes)
+                self.ai_queue.put((source, state, data, None))
+            except Exception as exc:
+                self.ai_queue.put((source, state, None, str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(150, self.poll_ai)
+
+    def scene_active(self):
+        return bool((self.ai_data or {}).get('scene_enabled'))
 
     def point(self, e):
         return image_point(e.x, e.y, self.scale, self.offset)
@@ -179,6 +248,9 @@ class App:
             return
         self.path, self.rays, self.clicked = path, [[], []], None
         self.clear_validation()
+        self.head_boxes = [None, None]
+        self.pending_head = None
+        self.scene_overlay_cache = None
         self.ai_data = None
         self.ray_source = "Manual"
         self.check.set('Click in Inspect mode to record a comparison point.')
@@ -210,6 +282,24 @@ class App:
             return self.pan_start(e)
         p = self.point(e)
         if not self.inside(p):
+            return
+        if self.mode.get() in ('Head 1', 'Head 2'):
+            i = int(self.mode.get()[-1])-1
+            if self.pending_head is None or self.pending_head[0] != i:
+                self.pending_head = (i, p)
+                self.ai_status.set('Click the opposite corner of the head box.')
+            else:
+                a = self.pending_head[1]
+                box = [min(a[0], p[0]), min(a[1], p[1]), max(a[0], p[0]), max(a[1], p[1])]
+                if box[2]-box[0] < 5 or box[3]-box[1] < 5:
+                    return self.ai_status.set('Head box is too small; click a more distant corner.')
+                self.head_boxes[i] = box
+                self.pending_head = None
+                self.ai_status.set('Head box changed. Click Analyse scene to obtain new heatmaps; current results are unchanged.')
+            self.draw()
+            return
+        if self.scene_active() and self.mode.get() not in ('Inspect', 'Mark ball'):
+            self.check.set('Scene heatmaps cannot be edited as rays. Use Head 1 / Head 2 and analyse again, or run Analyse image for ray mode.')
             return
         if self.mode.get() == 'Mark ball':
             if self.validation_snapshot is None:
@@ -302,6 +392,10 @@ class App:
         self.cursor.set(f'Image coordinates: X={p[0]:.1f}, Y={p[1]:.1f}' if self.inside(p) else 'Outside image')
 
     def reset(self):
+        self.head_boxes = [None, None]
+        self.pending_head = None
+        self.scene_overlay_cache = None
+        self.drag = None
         self.clear_validation()
         self.rays = [[], []]
         self.ai_data = None
@@ -309,6 +403,8 @@ class App:
         self.draw()
 
     def estimate(self):
+        if self.scene_active():
+            return None
         return intersection(*self.rays) if all(len(r) == 2 for r in self.rays) else None
 
     def degrees(self):
@@ -362,6 +458,16 @@ class App:
         visible = self.image.transform((w, h), Image.Transform.AFFINE,
             (1/self.scale, 0, -ox/self.scale, 0, 1/self.scale, -oy/self.scale),
             resample=Image.Resampling.BILINEAR, fillcolor='#111827')
+        if self.scene_active() and self.scene_view.get() != 'Hidden':
+            from scene_gaze import overlay_image
+            key = (id(self.ai_data), self.scene_view.get())
+            if self.scene_overlay_cache is None or self.scene_overlay_cache[0] != key:
+                self.scene_overlay_cache = (key, overlay_image(self.ai_data['people'], self.scene_view.get()))
+            heat = self.scene_overlay_cache[1].transform((w, h), Image.Transform.AFFINE,
+                (64/(self.scale*self.image.width), 0, -ox*64/(self.scale*self.image.width),
+                 0, 64/(self.scale*self.image.height), -oy*64/(self.scale*self.image.height)),
+                resample=Image.Resampling.BILINEAR)
+            visible = Image.alpha_composite(visible.convert('RGBA'), heat)
         self.photo = ImageTk.PhotoImage(visible)
         self.canvas.create_image(0, 0, anchor='nw', image=self.photo)
         if self.ai_data:
@@ -376,7 +482,7 @@ class App:
                     self.canvas.create_oval(x-4, y-4, x+4, y+4, outline=color, width=1)
                     if self.mode.get() == 'Edit eyes':
                         self.canvas.create_text(x, y-10, text=f'P{i+1} eye {j+1}', fill=color, anchor='s')
-        for i, ray in enumerate([] if (self.ai_data or {}).get('per_eye_enabled') else self.rays):
+        for i, ray in enumerate([] if self.scene_active() or (self.ai_data or {}).get('per_eye_enabled') else self.rays):
             for j, p in enumerate(ray):
                 x, y = self.screen(p)
                 self.canvas.create_oval(x-5, y-5, x+5, y+5, fill=COLORS[i], outline='white')
@@ -391,7 +497,7 @@ class App:
                     self.canvas.create_line(*self.screen(a), *self.screen(end), fill=COLORS[i], width=2)
         p = self.estimate()
         self.result.set('Mark two eyes/direction pairs. Results are manual estimates.')
-        if not (self.ai_data or {}).get('per_eye_enabled') and all(len(r) == 2 for r in self.rays):
+        if not self.scene_active() and not (self.ai_data or {}).get('per_eye_enabled') and all(len(r) == 2 for r in self.rays):
             if p is None:
                 self.result.set('No stable forward intersection: rays are parallel, nearly parallel, degenerate, or point apart.')
             else:
@@ -409,6 +515,18 @@ class App:
                     f'Y {min(ys):.0f}–{max(ys):.0f}. Sensitivity only; not confidence or a verified ball location.')
         if (self.ai_data or {}).get('per_eye_enabled'):
             self.draw_eye_overlay()
+        if self.scene_active():
+            people = self.ai_data['people']
+            scores = ', '.join(f"P{i+1} in-frame score {p['in_frame_score']:.2f}" for i, p in enumerate(people))
+            support = 'Shared high-activation cells shown in green.' if self.ai_data['shared_cell_count'] else 'No shared high-activation region.'
+            self.result.set(f'Scene gaze: {scores}. {support} Scores are uncalibrated; 64×64 heatmaps, not exact ball coordinates.')
+        for i, box in enumerate(self.head_boxes):
+            if box:
+                self.canvas.create_rectangle(*self.screen(box[:2]), *self.screen(box[2:]), outline=COLORS[i], width=2)
+                self.canvas.create_text(*self.screen(box[:2]), text=f'Head {i+1} (next analysis)', fill=COLORS[i], anchor='sw')
+        if self.pending_head:
+            x, y = self.screen(self.pending_head[1])
+            self.canvas.create_oval(x-4, y-4, x+4, y+4, outline='white')
         if self.validation_target:
             x, y = self.screen(self.validation_target)
             self.canvas.create_oval(x-7, y-7, x+7, y+7, outline='#ff4fa3', width=2)
@@ -444,7 +562,11 @@ class App:
     def update_validation_status(self):
         record = label_record(self.validation_snapshot, self.validation_target)
         m = record['metrics']
-        if m['point_prediction_available']:
+        if 'scene_people' in m:
+            detail = 'Scene peak errors: ' + ', '.join(
+                f"P{i+1}: {p['error_pixels']:.1f} px" if p['error_pixels'] is not None else f'P{i+1}: unavailable'
+                for i, p in enumerate(m['scene_people'])) + '. No combined ball point.'
+        elif m['point_prediction_available']:
             detail = f"Error: {m['error_pixels']:.1f} px ({m['error_percent_diagonal']:.2f}% of image diagonal)."
         elif self.validation_snapshot['prediction']['region'] is not None:
             detail = ('Known ball is inside' if m['target_in_region'] else 'Known ball is outside') + ' the frozen overlap region. No point prediction to score.'
@@ -487,7 +609,7 @@ class App:
             return
         path = filedialog.asksaveasfilename(defaultextension='.json', filetypes=[('JSON', '*.json')])
         if path:
-            data = dict(schema_version=2,
+            data = dict(schema_version=3,
                         per_eye_overlap=self.eye_overlay()[1] if (self.ai_data or {}).get('per_eye_enabled') else None,
                         tolerance_is_confidence=False, image_name=self.path.replace('\\', '/').split('/')[-1],
                         width=self.image.width, height=self.image.height, rays=self.rays,

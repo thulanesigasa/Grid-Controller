@@ -147,8 +147,79 @@ image or **Reset lines** clears validation. Save before replacing a trial. The r
 
 For fair evaluation, record failures as well as successes and use identical ball
 labels for AI/manual comparisons. Do not tune lines after seeing the answer and
-present that as an independent manual prediction. Current AI uses face crops, but
+present that as an independent manual prediction. The face/per-eye AI uses face crops, but
 verify that a visible ball does not appear inside those crops; this mode does not
 mask it automatically. No calibrated reliability score is added. Training and held-out
 accuracy measurements are still future work; do not train and test on the same match
 or near-duplicate frames.
+
+
+## Scene gaze: full photograph and head boxes
+
+**Analyse scene (AI)** uses pretrained [Gaze-LLE](https://github.com/fkryan/gazelle)
+with a DINOv2 backbone to estimate where each selected person may be looking.
+It considers the full photograph with a head-box input. It does not explicitly
+predict actions, detect a missing ball, train on your corrections, or guarantee
+that two players are watching the same target. Existing face/per-eye modes remain
+available through **Analyse image**.
+
+In PowerShell, from the project folder:
+
+```powershell
+# Skip this first command if CPU torch and torchvision are already installed.
+.venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv\Scripts\python -m pip install -r requirements-scene.txt
+.venv\Scripts\python app.py
+```
+
+The small Gaze-LLE inference modules are bundled with their upstream MIT license
+and revision in `gazelle/`; this avoids upstream packaging omissions.
+The first scene analysis downloads the pinned DINOv2 code/backbone and Gaze-LLE
+weights, then caches them. Allow several minutes and several hundred MB of disk
+space. Inference runs on CPU locally; later runs reuse the loaded model.
+
+1. Open your original photograph.
+2. Select **Head 1**, then click two opposite corners around the first player's
+   entire head, including hair. Repeat with **Head 2** for the other player.
+   One head is also supported. Boxes use original-image coordinates at any zoom.
+3. Click **Analyse scene (AI)**. Alternatively, **Auto head boxes** clears manual
+   boxes; the next analysis proposes the two largest detected faces, expanded
+   to approximate heads and ordered left to right. Inspect these proposals:
+   they can miss hair or select the wrong person. Manual boxes are preferable
+   when proposals are inaccurate.
+4. Use **Heatmap: P1 / P2 / Both / Hidden** to compare the suggestions. Cyan is
+   P1, orange P2, and green marks shared high relative activation. No overlap
+   means no shared region is reported; the app never forces an intersection.
+5. Correct a head box and analyse again to recompute. Box changes do not alter
+   the current heatmap until analysis succeeds. **Reset lines** clears analysis.
+
+Heatmaps are 64 by 64 cells resized onto the image, not pixel-accurate directions.
+Colours show each map's relative intensity, not probability of finding a ball.
+Green requires both normalized maps to be at least 0.6 of their own range.
+An in-frame score below 0.5 or a flat map suppresses that person's displayed
+location. These are display rules, not calibrated confidence or accuracy claims.
+JSON exports include raw maps, head boxes, model revisions, scores and individual
+cell-centre peaks; the combined ball coordinate remains null.
+
+Validation records report each available peak's error and shared-region coverage
+against a known target. **Scene inference sees the whole image, including any
+visible ball.** Success on a visible-ball photograph does not establish accuracy
+on missing-ball photographs. A controlled missing-ball evaluation needs separately
+prepared inputs with the ball removed and labels retained from the original,
+plus held-out matches; removal artifacts can themselves leak the answer.
+Do not use your guessed coordinates as verified labels.
+
+Scene tests cover coordinate mapping, invalid outputs, absent/disagreeing maps,
+layer separation, frozen validation and stale-result rejection. These checks do
+not measure prediction accuracy. Windows desktop interaction still needs testing
+on your computer.
+
+
+Development verification: all 31 automated tests passed. The pinned backbone and
+checkpoint loaded successfully on Linux CPU (Python 3.12, torch 2.14.1+cpu,
+torchvision 0.29.1+cpu), and scene-only inference returned two 64x64 maps on the
+2048x1547 example photograph with manually supplied head boxes. Both in-frame
+scores fell below the 0.5 display gate, so no region was displayed. This is an
+integration check, not evidence of improved accuracy. Automatic head proposals
+were not rerun on that photograph; Windows UI interaction remains unverified.
+Missing xFormers warnings are expected for the CPU path; it is not required.

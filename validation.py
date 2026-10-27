@@ -44,4 +44,16 @@ def label_record(snapshot, target, group='', verified=False):
                              error_percent_diagonal=100*error/math.hypot(w, h) if error is not None else None,
                              region_available=bool(region),
                              target_in_region=region_contains(region, target) if region is not None else None)
+    ai = record['prediction'].get('ai_analysis') or {}
+    if ai.get('scene_enabled'):
+        from scene_gaze import shared_mask
+        people = ai['people']
+        record['metrics']['scene_people'] = [dict(
+            error_pixels=math.dist(p['peak'], target) if p['peak'] is not None else None,
+            error_percent_diagonal=100*math.dist(p['peak'], target)/math.hypot(w, h) if p['peak'] is not None else None,
+            in_frame_score=p['in_frame_score']) for p in people]
+        mask = shared_mask(people, ai.get('shared_relative_threshold', .6))
+        x, y = min(63, int(target[0]*64/w)), min(63, int(target[1]*64/h))
+        record['metrics']['scene_shared_contains_target'] = bool(mask[y, x])
+        record['metrics']['scene_shared_image_fraction'] = float(mask.mean())
     return record
