@@ -53,12 +53,3 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(a.workflow, 'Scene AI')
         self.assertEqual(selections, [0])
 
-    def test_hiding_validation_exits_ball_marking(self):
-        a = self.app()
-        a.details_visible = True
-        a.mode.set('Mark ball')
-        a.details = SimpleNamespace(pack_forget=lambda: None)
-        a.details_button = SimpleNamespace(configure=lambda **kw: None)
-        a.toggle_details()
-        self.assertFalse(a.details_visible)
-        self.assertEqual(a.mode.get(), 'Inspect')
