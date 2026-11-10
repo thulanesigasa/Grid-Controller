@@ -6,6 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
+from per_eye import assess_eye_pair
 from geometry import intersection, sensitivity, image_point, rotate, cone_overlap
 
 COLORS = ('#00d8ff', '#ffb340')
@@ -226,6 +227,10 @@ class App:
         if data.get('per_eye_enabled'):
             self.ai_status.set('Per-eye model: assumed camera calibration. Drag endpoint circles in Eye directions mode. '
                                + ' '.join(f"P{i+1}: {f.get('per_eye_note', '')}" for i, f in enumerate(data['faces'])))
+            conflicts = [f"P{i+1}: {assess_eye_pair(f.get('eye_rays', []))['reason']} — unreliable"
+                         for i, f in enumerate(data['faces']) if not assess_eye_pair(f.get('eye_rays', []))['usable']]
+            if conflicts:
+                self.ai_status.set('; '.join(conflicts) + '. Grey dashed segments are excluded from shared-region estimation.')
         self.draw()
 
     def analysis_state(self):
@@ -459,7 +464,8 @@ class App:
 
     def eye_overlay(self):
         faces = (self.ai_data or {}).get('faces', [])
-        rays = [ray for face in faces for ray in face.get('eye_rays', [])]
+        rays = [ray for face in faces
+                for ray in (face.get('eye_rays', []) if assess_eye_pair(face.get('eye_rays', []))['usable'] else [None, None])]
         polygon = cone_overlap(rays, self.degrees(), self.image.width, self.image.height) if len(rays) == 4 else []
         return rays, polygon
 
@@ -469,26 +475,34 @@ class App:
             self.canvas.create_polygon(*[v for p in polygon for v in self.screen(p)],
                                        fill='#a3e635', stipple='gray25', outline='#a3e635', width=1)
         extent = math.hypot(self.image.width, self.image.height)*2
+        warnings = []
         for i, face in enumerate(self.ai_data['faces']):
+            assessment = assess_eye_pair(face.get('eye_rays', []))
+            rejected = not assessment['usable']
+            if rejected:
+                angle = assessment['angle_degrees']
+                detail = f' ({angle:.0f}° apart)' if angle is not None else ''
+                warnings.append(f"P{i+1}: {assessment['reason']}{detail} — unreliable")
             for j, ray in enumerate(face.get('eye_rays', [])):
-                if not ray or math.dist(*ray) < 1e-8:
+                if not ray or not all(math.isfinite(v) for p in ray for v in p) or math.dist(*ray) < 1e-8:
                     continue
                 variants = [(ray, False)]
-                if self.boundaries.get():
+                if self.boundaries.get() and not rejected:
                     variants += [(rotate(ray, d), True) for d in (-self.degrees(), self.degrees())]
                 for (a, b), boundary in variants:
                     length = math.dist(a, b)
-                    end = [a[k]+(b[k]-a[k])*extent/length for k in (0, 1)]
-                    self.canvas.create_line(*self.screen(a), *self.screen(end), fill=COLORS[i],
-                                            width=1, dash=(3, 4) if boundary else ())
+                    end = list(b) if rejected else [a[k]+(b[k]-a[k])*extent/length for k in (0, 1)]
+                    self.canvas.create_line(*self.screen(a), *self.screen(end), fill='#9ca3af' if rejected else COLORS[i],
+                                            width=1, dash=(3, 4) if boundary or rejected else ())
                 x, y = self.screen(ray[1])
                 self.canvas.create_oval(x-4, y-4, x+4, y+4, outline=COLORS[i])
-                self.canvas.create_text(x+7, y, text=f'P{i+1} eye {j+1}', fill=COLORS[i], anchor='w')
+                self.canvas.create_text(x+7, y, text=f'P{i+1} eye {j+1}'+(' — unreliable' if rejected else ''),
+                                        fill='#9ca3af' if rejected else COLORS[i], anchor='w')
         count = sum(bool(r) and math.dist(*r) >= 1e-8 for r in rays)
         status = 'Shared region shaded green.' if polygon else 'No shared region inside the image.'
         if count != 4:
-            status = 'Four valid eye directions required for shared-region analysis.'
-        self.result.set(f'{self.ray_source}: {count}/4 eye directions. {status} ±{self.degrees():g}° is adjustable '
+            status = 'Shared-region estimate withheld. ' + ('; '.join(warnings) or 'Two complete eye pairs are required.')
+        self.result.set(f'{self.ray_source}: {count}/4 eye directions pass the consistency check. {status} ±{self.degrees():g}° is adjustable '
                         'image-plane tolerance, not confidence. Assumed camera; unvalidated ball location.')
 
     def draw(self):

@@ -212,3 +212,38 @@ circle. Use **Fit** if the endpoint is outside the zoomed viewport.
 
 Linked-head matching and direction editing are covered by automated tests.
 Full face-model inference on the photo was not repeated for this change.
+
+## Conflicting eye directions
+
+Separate-eye mode now checks the angle between each player's two projected
+image-plane directions. A pair more than 60 degrees apart, or with a missing,
+non-finite or zero-length direction, is excluded from shared-region estimation.
+A shared region still requires both complete pairs; the app does not silently
+calculate it from only the remaining player. The angle sensitivity setting does
+not change this check.
+
+Conflicting predictions appear as short grey dashed segments labelled
+**unreliable**, without boundary cones or extended coloured rays. Their endpoint
+handles remain editable. Edits are re-evaluated immediately and remain labelled
+as manual changes; original `raw_eye_rays` are retained in memory. Neither eye
+is flipped, averaged or selected as the correct one.
+
+The 60-degree rule is a conservative, provisional image-plane heuristic, not an
+anatomical limit or calibrated confidence. Perspective can amplify apparent
+angular disagreement, so it may exclude valid predictions. Passing the check
+does not establish correct gaze or a shared target. The actual prediction error
+still needs investigation with known targets and the original image/camera data.
+
+Audit of pinned ptgaze commit `7993db777ac0fae4f976213bfc4b1b8741ba164d`:
+`GazeEstimator._run_mpiigaze_model` mirrors the right-eye input and restores yaw;
+`_store_gaze` denormalizes each eye using its own normalization rotation. Grid
+Controller delegates these operations to ptgaze and does not mirror again.
+Our `center + length * gaze_vector` projection matches upstream
+`Demo._draw_gaze_vector`. This source review did not establish a sign-flip bug;
+it does not validate the inferred head pose or crops for the example photograph.
+No full-photo model inference was repeated for this change.
+
+Verification: 41 tests passed; one optional Torch inference-contract test was
+skipped because Torch was absent in the test environment. Added checks cover
+opposed directions, angle wraparound, invalid rays, exclusion from overlap,
+preservation of raw predictions, re-evaluation after edits and grey rendering.

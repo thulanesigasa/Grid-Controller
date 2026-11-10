@@ -16,6 +16,39 @@ def screen_ray(origin, projected, length):
     return [list(origin), [float(origin[0]+length*dx/norm), float(origin[1]+length*dy/norm)]]
 
 
+# Display-space heuristic, not an anatomical limit or calibrated confidence.
+MAX_PAIR_ANGLE_DEGREES = 60.0
+
+
+def assess_eye_pair(rays):
+    """Reject unusable or strongly conflicting projected directions as a pair.
+
+    Raw rays remain untouched. Passing only means this heuristic found no large
+    disagreement; it does not establish correctness or a common fixation point.
+    """
+    vectors = []
+    if len(rays) != 2:
+        return dict(usable=False, angle_degrees=None, reason='Missing eye direction')
+    for ray in rays:
+        try:
+            if ray is None or len(ray) != 2 or any(len(p) != 2 for p in ray):
+                raise ValueError
+            if not all(math.isfinite(float(v)) for p in ray for v in p):
+                raise ValueError
+            dx, dy = ray[1][0]-ray[0][0], ray[1][1]-ray[0][1]
+            norm = math.hypot(dx, dy)
+            if norm < 1e-8 or not math.isfinite(norm):
+                raise ValueError
+            vectors.append((dx/norm, dy/norm))
+        except (ValueError, TypeError, OverflowError):
+            return dict(usable=False, angle_degrees=None, reason='Missing or invalid eye direction')
+    dot = sum(a*b for a, b in zip(*vectors))
+    angle = math.degrees(math.acos(max(-1., min(1., dot))))
+    usable = angle <= MAX_PAIR_ANGLE_DEGREES
+    return dict(usable=usable, angle_degrees=angle,
+                reason='No large directional conflict detected' if usable else 'Conflicting eye directions')
+
+
 def prepare_landmarks(landmarks):
     """OpenCV solvePnP requires packed floating-point XY coordinates."""
     import numpy as np
