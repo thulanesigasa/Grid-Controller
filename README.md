@@ -270,3 +270,12 @@ Source inspection of UniFace 4.1.0 confirms that MobileGaze expects BGR crops,
 converts them to RGB internally and returns radians. The application follows
 that interface. No colour-channel or degree/radian correction was substantiated
 by this review. Diagnostic collection does not itself improve model accuracy.
+
+## Completed input stability audit
+
+The two supplied face crops were tested with the verified ResNet34 model using
+local OpenCV DNN. Player 2's direction changed by at most 5.38 degrees across the
+tested variants; player 1 changed by up to 18.40 degrees. Baseline outputs matched
+the user's diagnostic angles. These results do not identify a correct gaze
+or demonstrate improved accuracy, so no crop correction was added to the app.
+See [the audit findings and reproduction command](docs/input-audit.md).

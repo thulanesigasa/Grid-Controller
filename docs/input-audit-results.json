@@ -1,0 +1,333 @@
+{
+  "model_sha256": "c8e6b14f6095d2425241b9302aa663d9a23b7dfb9d43941352b718c91dc7f2cf",
+  "backend": "OpenCV DNN CPU",
+  "opencv_version": "5.0.0",
+  "players": [
+    {
+      "player": 1,
+      "baseline_matches_diagnostics": true,
+      "baseline_max_angle_error_degrees": 6.455196267296515e-05,
+      "eye_line_roll_degrees": 5.186744305762883,
+      "runs": [
+        {
+          "variant": "baseline",
+          "crop_size": [
+            146,
+            178
+          ],
+          "pitch_degrees": 21.70113726384966,
+          "yaw_degrees": 13.260646976326825,
+          "restored_direction": [
+            -0.4993670295241553,
+            -0.8663905411673315
+          ],
+          "direction_change_degrees": 0.0
+        },
+        {
+          "variant": "trim-all-5pct",
+          "crop_size": [
+            132,
+            160
+          ],
+          "pitch_degrees": 22.793277408244336,
+          "yaw_degrees": 10.86489580705529,
+          "restored_direction": [
+            -0.40926894929267205,
+            -0.9124137916235552
+          ],
+          "direction_change_degrees": 5.799212228851614
+        },
+        {
+          "variant": "trim-left-5pct",
+          "crop_size": [
+            139,
+            178
+          ],
+          "pitch_degrees": 22.486090557828334,
+          "yaw_degrees": 4.857949894561898,
+          "restored_direction": [
+            -0.20043789779318713,
+            -0.9797064096596735
+          ],
+          "direction_change_degrees": 18.395564573616912
+        },
+        {
+          "variant": "trim-right-5pct",
+          "crop_size": [
+            139,
+            178
+          ],
+          "pitch_degrees": 22.993381057351257,
+          "yaw_degrees": 11.04531801835401,
+          "restored_direction": [
+            -0.41149505312744866,
+            -0.9114119931466987
+          ],
+          "direction_change_degrees": 5.659345480375139
+        },
+        {
+          "variant": "trim-top-5pct",
+          "crop_size": [
+            146,
+            169
+          ],
+          "pitch_degrees": 21.394303679658236,
+          "yaw_degrees": 11.049189236655366,
+          "restored_direction": [
+            -0.43942158415430876,
+            -0.8982809534768718
+          ],
+          "direction_change_degrees": 3.8911500812055
+        },
+        {
+          "variant": "trim-bottom-5pct",
+          "crop_size": [
+            146,
+            169
+          ],
+          "pitch_degrees": 23.42187486237833,
+          "yaw_degrees": 13.974622151596122,
+          "restored_direction": [
+            -0.48692105587388834,
+            -0.8734459830731708
+          ],
+          "direction_change_degrees": 0.8197202308121806
+        },
+        {
+          "variant": "square-reflected-padding",
+          "crop_size": [
+            178,
+            178
+          ],
+          "pitch_degrees": 20.553260676564236,
+          "yaw_degrees": 9.582217814517207,
+          "restored_direction": [
+            -0.4057734557035531,
+            -0.9139736881586891
+          ],
+          "direction_change_degrees": 6.018526900742538
+        },
+        {
+          "variant": "roll-minus-5",
+          "crop_size": [
+            146,
+            178
+          ],
+          "pitch_degrees": 24.12922646079943,
+          "yaw_degrees": 12.305572750454303,
+          "restored_direction": [
+            -0.506710180407528,
+            -0.8621164614316157
+          ],
+          "direction_change_degrees": 0.48681205486177165
+        },
+        {
+          "variant": "roll-plus-5",
+          "crop_size": [
+            146,
+            178
+          ],
+          "pitch_degrees": 21.01680902908285,
+          "yaw_degrees": 18.349234708672157,
+          "restored_direction": [
+            -0.5639681630787523,
+            -0.8257965312554769
+          ],
+          "direction_change_degrees": 4.372537515602693
+        },
+        {
+          "variant": "eye-line-levelled",
+          "crop_size": [
+            146,
+            178
+          ],
+          "pitch_degrees": 21.03724984326027,
+          "yaw_degrees": 18.254558132670354,
+          "restored_direction": [
+            -0.5588134264233998,
+            -0.8292934067318634
+          ],
+          "direction_change_degrees": 4.01564609461515
+        },
+        {
+          "variant": "horizontal-flip",
+          "crop_size": [
+            146,
+            178
+          ],
+          "pitch_degrees": 29.413715569301473,
+          "yaw_degrees": -9.72947806911543,
+          "restored_direction": [
+            -0.287130511600376,
+            -0.957891470526858
+          ],
+          "direction_change_degrees": 13.271890157537968
+        }
+      ],
+      "note": "Perturbation stability is not gaze accuracy. No transformation selected as the correct gaze."
+    },
+    {
+      "player": 2,
+      "baseline_matches_diagnostics": true,
+      "baseline_max_angle_error_degrees": 2.7232028898538374e-05,
+      "eye_line_roll_degrees": 7.851077623760267,
+      "runs": [
+        {
+          "variant": "baseline",
+          "crop_size": [
+            164,
+            188
+          ],
+          "pitch_degrees": 26.24326692899703,
+          "yaw_degrees": 16.298621540656313,
+          "restored_direction": [
+            -0.49471599005461575,
+            -0.8690547101214522
+          ],
+          "direction_change_degrees": 0.0
+        },
+        {
+          "variant": "trim-all-5pct",
+          "crop_size": [
+            148,
+            170
+          ],
+          "pitch_degrees": 28.075489724586646,
+          "yaw_degrees": 16.108537963678828,
+          "restored_direction": [
+            -0.4614698833710825,
+            -0.8871558751095997
+          ],
+          "direction_change_degrees": 2.1690270135257825
+        },
+        {
+          "variant": "trim-left-5pct",
+          "crop_size": [
+            156,
+            188
+          ],
+          "pitch_degrees": 26.177250792514116,
+          "yaw_degrees": 15.203305881557752,
+          "restored_direction": [
+            -0.47069345985866584,
+            -0.8822968133492711
+          ],
+          "direction_change_degrees": 1.5717042122535445
+        },
+        {
+          "variant": "trim-right-5pct",
+          "crop_size": [
+            156,
+            188
+          ],
+          "pitch_degrees": 26.43710923882523,
+          "yaw_degrees": 16.299636865820503,
+          "restored_direction": [
+            -0.4915631791114601,
+            -0.8708419150120386
+          ],
+          "direction_change_degrees": 0.20764746631205264
+        },
+        {
+          "variant": "trim-top-5pct",
+          "crop_size": [
+            164,
+            179
+          ],
+          "pitch_degrees": 27.62312673202456,
+          "yaw_degrees": 16.412971227953676,
+          "restored_direction": [
+            -0.47511748433276646,
+            -0.8799223693493099
+          ],
+          "direction_change_degrees": 1.2840244493711037
+        },
+        {
+          "variant": "trim-bottom-5pct",
+          "crop_size": [
+            164,
+            179
+          ],
+          "pitch_degrees": 28.200871449442843,
+          "yaw_degrees": 15.112483614604571,
+          "restored_direction": [
+            -0.4372671150169213,
+            -0.8993316797070915
+          ],
+          "direction_change_degrees": 3.7213822433598134
+        },
+        {
+          "variant": "square-reflected-padding",
+          "crop_size": [
+            188,
+            188
+          ],
+          "pitch_degrees": 24.95392021005523,
+          "yaw_degrees": 15.855403923313135,
+          "restored_direction": [
+            -0.5063145959692508,
+            -0.8623488446727893
+          ],
+          "direction_change_degrees": 0.7676329700872647
+        },
+        {
+          "variant": "roll-minus-5",
+          "crop_size": [
+            164,
+            188
+          ],
+          "pitch_degrees": 27.38656715774721,
+          "yaw_degrees": 11.645225280168233,
+          "restored_direction": [
+            -0.4428766371703221,
+            -0.8965825585235901
+          ],
+          "direction_change_degrees": 3.3634576917091
+        },
+        {
+          "variant": "roll-plus-5",
+          "crop_size": [
+            164,
+            188
+          ],
+          "pitch_degrees": 29.137112452988987,
+          "yaw_degrees": 18.205827152734855,
+          "restored_direction": [
+            -0.4110291207789769,
+            -0.9116222144461273
+          ],
+          "direction_change_degrees": 5.38152517670132
+        },
+        {
+          "variant": "eye-line-levelled",
+          "crop_size": [
+            164,
+            188
+          ],
+          "pitch_degrees": 27.523949811454514,
+          "yaw_degrees": 20.19715962916962,
+          "restored_direction": [
+            -0.4332694301530029,
+            -0.9012644455956821
+          ],
+          "direction_change_degrees": 3.9757980903741306
+        },
+        {
+          "variant": "horizontal-flip",
+          "crop_size": [
+            164,
+            188
+          ],
+          "pitch_degrees": 30.597426782030027,
+          "yaw_degrees": -22.818480704852846,
+          "restored_direction": [
+            -0.5484068643353305,
+            -0.8362116425582046
+          ],
+          "direction_change_degrees": 3.6067615693293713
+        }
+      ],
+      "note": "Perturbation stability is not gaze accuracy. No transformation selected as the correct gaze."
+    }
+  ]
+}
