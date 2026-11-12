@@ -247,3 +247,26 @@ Verification: 41 tests passed; one optional Torch inference-contract test was
 skipped because Torch was absent in the test environment. Added checks cover
 opposed directions, angle wraparound, invalid rays, exclusion from overlap,
 preservation of raw predictions, re-evaluation after edits and grey rendering.
+
+## Troubleshooting a wrong whole-face direction
+
+The separate-eye consistency check does not change the default MobileGaze
+whole-face ray. If that ray still looks wrong, collect its actual inputs/outputs:
+
+```powershell
+.venv\Scripts\python diagnose_gaze.py
+```
+
+Choose the original photograph in the picker. The command writes a new
+`gaze-diagnostics-<timestamp>.zip` in the project folder, with lossless face crops,
+original dimensions, eye positions and raw pitch/yaw values in radians and
+degrees. Crops are saved before the model's internal resizing and normalization.
+These include player faces; inspect them before sharing the ZIP for debugging.
+No UI controls are added. This command uses automatic face selection; it does not
+reuse manually drawn head boxes from an open app. `--per-eye` optionally adds
+separate-eye outputs, requiring its extra dependencies.
+
+Source inspection of UniFace 4.1.0 confirms that MobileGaze expects BGR crops,
+converts them to RGB internally and returns radians. The application follows
+that interface. No colour-channel or degree/radian correction was substantiated
+by this review. Diagnostic collection does not itself improve model accuracy.
