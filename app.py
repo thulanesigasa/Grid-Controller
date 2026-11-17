@@ -483,8 +483,8 @@ class App:
             return None
         return intersection(*self.rays) if all(len(r) == 2 for r in self.rays) else None
 
-    def manual_fit(self):
-        return fit_four_rays(self.manual_rays, self.degrees(), self.image.width, self.image.height)
+    def manual_fit(self, require_tolerance=True):
+        return fit_four_rays(self.manual_rays, self.degrees(), self.image.width, self.image.height, require_tolerance=require_tolerance)
 
     def draw_manual(self):
         complete = sum(len(ray) == 2 and math.dist(*ray) > 1e-8 for ray in self.manual_rays)
@@ -510,12 +510,25 @@ class App:
                 end = [a[k]+(b[k]-a[k])*extent/length for k in (0, 1)]
                 self.canvas.create_line(*self.screen(a), *self.screen(end), fill=color,
                                         width=1, dash=(3, 4) if boundary else ())
-        fit = self.manual_fit() if complete == 4 else None
+        fit = self.manual_fit(require_tolerance=False) if complete == 4 else None
         if fit:
             x, y = self.screen(fit['point'])
-            self.canvas.create_line(x-10, y, x+10, y, fill='white', width=2)
-            self.canvas.create_line(x, y-10, x, y+10, fill='white', width=2)
-            detail = f"Fit: X={fit['point'][0]:.1f}, Y={fit['point'][1]:.1f}; line disagreement RMS {fit['rms_pixels']:.1f} px."
+            supported = fit['within_tolerance']
+            color = '#a3e635' if supported else '#fbbf24'
+            self.canvas.create_oval(x-12, y-12, x+12, y+12, outline='black', fill=color, width=3)
+            self.canvas.create_line(x-18, y, x+18, y, fill='white', width=2)
+            self.canvas.create_line(x, y-18, x, y+18, fill='white', width=2)
+            self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='black', outline='black')
+            label = 'MANUAL FIT' if supported else 'APPROXIMATE FIT — lines disagree'
+            lx = max(4, min(x+22, self.canvas.winfo_width()-294))
+            ly = max(4, min(y-44, self.canvas.winfo_height()-56))
+            self.canvas.create_rectangle(lx, ly, lx+290, ly+50, fill='#111827', outline=color, width=2)
+            self.canvas.create_text(lx+7, ly+6,
+                                    text=f"{label}\nX={fit['point'][0]:.1f}   Y={fit['point'][1]:.1f}",
+                                    fill=color, anchor='nw', font=('', 10, 'bold'))
+            detail = f"{'Fit' if supported else 'Approximate fit'}: X={fit['point'][0]:.1f}, Y={fit['point'][1]:.1f}; line disagreement RMS {fit['rms_pixels']:.1f} px."
+            if not supported:
+                detail += f" AMBER: outside ±{self.degrees():g}°; largest angular miss {fit['max_angle_degrees']:.1f}°."
         elif complete < 4:
             detail = 'Place an eye centre and direction for each of the four eyes.'
         else:

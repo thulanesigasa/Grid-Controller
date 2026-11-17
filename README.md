@@ -297,10 +297,11 @@ The manual lines do not require AI models or inherit AI predictions.
 
 All centre lines and optional angular boundaries are 1 pixel wide. With all four
 nonzero lines present, green shows the shared forward angular region inside the
-image at the selected sensitivity. The white cross is an equal-weight
-least-squares fit to all four directions, shown only when it lies inside the
-image, forward of every eye, and within every angular tolerance. Nearly parallel
-sets are rejected. Missing or conflicting directions can leave no coordinate.
+image at the selected sensitivity. The labelled target marker is an equal-weight least-squares fit to all four
+directions. Green means it satisfies every angular tolerance. Amber means
+**approximate fit — lines disagree**, and displays the largest angular miss.
+Both markers must lie inside the image and forward of every eye. Nearly parallel
+sets are rejected. Missing, backward or unstable directions can leave no coordinate.
 A shared region can exist without a stable fitted point.
 
 The displayed RMS is perpendicular disagreement between the lines in original
@@ -312,3 +313,10 @@ Verification includes a known four-ray target, contribution of the fourth line,
 missing/parallel/backward/outside cases, tolerance rejection, independent eye
 editing under zoom, and four thin-line rendering. Windows desktop interaction
 still needs a local visual check.
+
+
+The manual target marker is deliberately large, with a white crosshair and a
+contrasting label showing original-image X/Y coordinates next to the point.
+An amber approximate marker does not create a shared green region or count as
+a supported estimate. RMS and angular disagreement describe line agreement only;
+the ball position remains unverified. No extra controls are required.

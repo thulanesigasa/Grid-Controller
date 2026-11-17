@@ -91,9 +91,44 @@ class ManualEyesTests(unittest.TestCase):
         a.canvas = SimpleNamespace(create_polygon=lambda *args, **kw: None,
                                    create_line=lambda *args, **kw: lines.append(kw),
                                    create_oval=lambda *args, **kw: None,
-                                   create_text=lambda *args, **kw: None)
+                                   create_text=lambda *args, **kw: None,
+                                   create_rectangle=lambda *args, **kw: None,
+                                   winfo_width=lambda: 800, winfo_height=lambda: 600)
         a.draw_manual()
         self.assertEqual(sum(line['width'] == 1 for line in lines), 4)
         self.assertIn('4/4', a.result.get())
         self.assertIn('X=50.0', a.result.get())
         self.assertIsNone(a.ai_data)
+
+    def test_approximate_fit_is_flagged_without_bypassing_forward_bounds(self):
+        rays = target_rays()
+        rays[3][1][0] += 8
+        self.assertIsNone(fit_four_rays(rays, .1, 100, 100))
+        approximate = fit_four_rays(rays, .1, 100, 100, require_tolerance=False)
+        self.assertIsNotNone(approximate)
+        self.assertFalse(approximate['within_tolerance'])
+        self.assertGreater(approximate['max_angle_degrees'], .1)
+        self.assertIsNone(fit_four_rays(target_rays((50, -20)), 2, 100, 100, require_tolerance=False))
+        rays[0][1] = [-30, 160]
+        self.assertIsNone(fit_four_rays(rays, 2, 100, 100, require_tolerance=False))
+
+    def test_approximate_marker_does_not_become_supported_estimate(self):
+        a = self.app()
+        a.manual_rays = target_rays()
+        a.manual_rays[3][1][0] += 8
+        a.degrees = lambda: .1
+        a.boundaries = Value(False)
+        a.clicked = None
+        a.result = Value('')
+        colors, labels = [], []
+        a.canvas = SimpleNamespace(create_polygon=lambda *args, **kw: None,
+                                   create_line=lambda *args, **kw: None,
+                                   create_oval=lambda *args, **kw: colors.append(kw.get('fill')),
+                                   create_rectangle=lambda *args, **kw: None,
+                                   create_text=lambda *args, **kw: labels.append(kw['text']),
+                                   winfo_width=lambda: 800, winfo_height=lambda: 600)
+        a.draw_manual()
+        self.assertIn('#fbbf24', colors)
+        self.assertTrue(any('APPROXIMATE FIT' in text for text in labels))
+        self.assertIn('AMBER', a.result.get())
+        self.assertIsNone(a.estimate())

@@ -64,11 +64,13 @@ def cone_overlap(rays, degrees, width, height):
     return polygon if len(polygon) >= 3 else []
 
 
-def fit_four_rays(rays, degrees, width, height):
+def fit_four_rays(rays, degrees, width, height, require_tolerance=True):
     """Least-squares 2D point, accepted only inside all four forward cones.
 
     Equal weights; RMS is perpendicular pixel disagreement, not target accuracy.
     Nearly parallel sets are rejected even if a large overlap polygon exists.
+    With require_tolerance=False, return a flagged approximate fit outside the
+    angular tolerance; forward direction and image bounds are still required.
     """
     if len(rays) != 4 or not 0 <= degrees <= 15 or width <= 1 or height <= 1:
         return None
@@ -95,11 +97,17 @@ def fit_four_rays(rays, degrees, width, height):
     if not (0 <= x <= width-1 and 0 <= y <= height-1):
         return None
     residuals = []
+    angles = []
     for a, dx, dy, nx, ny, c in rows:
         vx, vy = x-a[0], y-a[1]
         forward = dx*vx+dy*vy
         perpendicular = nx*x+ny*y-c
-        if forward < 0 or math.degrees(math.atan2(abs(perpendicular), forward)) > degrees+1e-7:
+        if forward < 0:
             return None
+        angles.append(math.degrees(math.atan2(abs(perpendicular), forward)))
         residuals.append(perpendicular**2)
-    return dict(point=[x, y], rms_pixels=math.sqrt(sum(residuals)/4))
+    within = max(angles) <= degrees+1e-7
+    if require_tolerance and not within:
+        return None
+    return dict(point=[x, y], rms_pixels=math.sqrt(sum(residuals)/4),
+                within_tolerance=within, max_angle_degrees=max(angles))
