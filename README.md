@@ -320,3 +320,17 @@ contrasting label showing original-image X/Y coordinates next to the point.
 An amber approximate marker does not create a shared green region or count as
 a supported estimate. RMS and angular disagreement describe line agreement only;
 the ball position remains unverified. No extra controls are required.
+
+## Save a prediction image
+
+Click **Save prediction image** after a target coordinate appears. Choose PNG or
+JPEG and a destination. The export uses the full original photo dimensions,
+independent of viewport zoom and pan. It includes the current rays, optional
+angular boundaries, shared region, target marker, and a white rectangle with
+original-image X/Y coordinates and **by thulanesigasa**.
+
+Amber manual fits are explicitly labelled **Approximate fit - lines disagree**
+in the exported image. A missing/unstable/outside target cannot be saved as a
+coordinate prediction. Scene heatmaps and separate-eye mode currently have no
+single exported target; use Manual for a four-eye coordinate estimate. The
+original source photograph cannot be overwritten through this button.

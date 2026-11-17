@@ -45,7 +45,7 @@ class App:
         ttk.Label(bar, text='GRID CONTROLLER', font=('', 15, 'bold')).pack(side='left', padx=(0, 20))
         for label, command in [('Open image', self.open_image), ('Fit', self.fit),
                                ('Zoom +', lambda: self.zoom(1.25)), ('Zoom −', lambda: self.zoom(.8)),
-                               ('Clear current result', self.reset)]:
+                               ('Clear current result', self.reset), ('Save prediction image', self.save_prediction_image)]:
             ttk.Button(bar, text=label, command=command).pack(side='left', padx=3)
         self.workflow = 'Scene AI'
         self.workflow_results = {}
@@ -109,6 +109,44 @@ class App:
         self.canvas.bind('<Configure>', lambda e: self.draw())
         ttk.Label(root, textvariable=self.cursor, padding=(10, 4)).pack(anchor='w')
         ttk.Label(root, textvariable=self.result, padding=(10, 4), wraplength=1150).pack(anchor='w')
+
+    def save_prediction_image(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph first.')
+        if self.ai_busy:
+            return messagebox.showinfo('Analysis running', 'Wait for analysis to finish before saving.')
+        if self.workflow == 'Manual':
+            fit = self.manual_fit(require_tolerance=False)
+            if fit is None:
+                return messagebox.showinfo('No target position', 'Place four eye lines that give a stable forward position inside the image.')
+            point, rays = fit['point'], self.manual_rays
+            approximate = not fit['within_tolerance']
+        else:
+            if self.scene_active() or (self.ai_data or {}).get('per_eye_enabled'):
+                return messagebox.showinfo('No single target position', 'This view shows regions or separate-eye suggestions. Use Manual to place four lines and calculate a coordinate for export.')
+            point, rays = self.estimate(), self.rays
+            approximate = False
+            if point is None or not (0 <= point[0] <= self.image.width-1 and 0 <= point[1] <= self.image.height-1):
+                return messagebox.showinfo('No target position', 'A stable position inside the image is required before saving.')
+        from pathlib import Path
+        path = filedialog.asksaveasfilename(title='Save prediction image',
+                   initialfile=Path(self.path).stem+'-prediction.png', defaultextension='.png',
+                   filetypes=[('PNG image', '*.png'), ('JPEG image', '*.jpg')])
+        if not path:
+            return
+        if Path(path).resolve() == Path(self.path).resolve():
+            return messagebox.showerror('Choose another filename', 'Save the prediction under a new name to keep the original photo.')
+        try:
+            from prediction_image import render_prediction
+            picture = render_prediction(self.image, rays, point, approximate,
+                                        self.degrees(), self.boundaries.get())
+            if Path(path).suffix.lower() in ('.jpg', '.jpeg'):
+                picture.save(path, format='JPEG', quality=95)
+            else:
+                picture.save(path, format='PNG')
+            self.ai_status.set('Prediction image saved with coordinates and by thulanesigasa.')
+        except (OSError, ValueError) as exc:
+            messagebox.showerror('Cannot save image', str(exc))
 
     def change_workflow(self, event=None):
         selected = self.tabs.tab(self.tabs.select(), 'text')
