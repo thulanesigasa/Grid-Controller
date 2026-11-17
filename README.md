@@ -279,3 +279,36 @@ tested variants; player 1 changed by up to 18.40 degrees. Baseline outputs match
 the user's diagnostic angles. These results do not identify a correct gaze
 or demonstrate improved accuracy, so no crop correction was added to the app.
 See [the audit findings and reproduction command](docs/input-audit.md).
+
+
+## Manual: one independent line per eye
+
+Manual mode now has **P1 eye 1**, **P1 eye 2**, **P2 eye 1**, **P2 eye 2**.
+Use P1 for the player on the left and P2 for the player on the right; eye 1 is
+the eye on the left of the screen, eye 2 on the right. These are screen labels,
+not anatomical left/right labels.
+
+For each selector, click the visible eye centre and then a point in its estimated
+looking direction. Eight clicks create four independent rays. Drag either handle
+to correct that eye's line. Clicking elsewhere with a completed eye selected
+replaces only that eye's line; **Clear current result** clears all four manual
+lines. Switching tabs preserves them; opening a new photograph clears them.
+The manual lines do not require AI models or inherit AI predictions.
+
+All centre lines and optional angular boundaries are 1 pixel wide. With all four
+nonzero lines present, green shows the shared forward angular region inside the
+image at the selected sensitivity. The white cross is an equal-weight
+least-squares fit to all four directions, shown only when it lies inside the
+image, forward of every eye, and within every angular tolerance. Nearly parallel
+sets are rejected. Missing or conflicting directions can leave no coordinate.
+A shared region can exist without a stable fitted point.
+
+The displayed RMS is perpendicular disagreement between the lines in original
+image pixels. It does not measure ball-position error. This is geometric support
+for your manual estimate, not automatic detection or a guaranteed perfect ball
+position. Changing tolerance changes the allowed region, not measured confidence.
+
+Verification includes a known four-ray target, contribution of the fourth line,
+missing/parallel/backward/outside cases, tolerance rejection, independent eye
+editing under zoom, and four thin-line rendering. Windows desktop interaction
+still needs a local visual check.

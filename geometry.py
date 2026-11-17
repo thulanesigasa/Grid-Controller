@@ -62,3 +62,44 @@ def cone_overlap(rays, degrees, width, height):
             dx, dy = b[0]-a[0], b[1]-a[1]
             polygon = clip(polygon, lambda p: sign*(dx*(p[1]-a[1])-dy*(p[0]-a[0])))
     return polygon if len(polygon) >= 3 else []
+
+
+def fit_four_rays(rays, degrees, width, height):
+    """Least-squares 2D point, accepted only inside all four forward cones.
+
+    Equal weights; RMS is perpendicular pixel disagreement, not target accuracy.
+    Nearly parallel sets are rejected even if a large overlap polygon exists.
+    """
+    if len(rays) != 4 or not 0 <= degrees <= 15 or width <= 1 or height <= 1:
+        return None
+    rows = []
+    for ray in rays:
+        if not ray or len(ray) != 2 or any(len(p) != 2 for p in ray) or not all(math.isfinite(v) for p in ray for v in p):
+            return None
+        a, b = ray
+        length = math.dist(a, b)
+        if length < 1e-8:
+            return None
+        dx, dy = (b[0]-a[0])/length, (b[1]-a[1])/length
+        nx, ny = -dy, dx
+        rows.append((a, dx, dy, nx, ny, nx*a[0]+ny*a[1]))
+    aa = sum(r[3]**2 for r in rows)
+    ab = sum(r[3]*r[4] for r in rows)
+    bb = sum(r[4]**2 for r in rows)
+    ac = sum(r[3]*r[5] for r in rows)
+    bc = sum(r[4]*r[5] for r in rows)
+    det = aa*bb-ab*ab
+    if det/(aa+bb)**2 < 1e-4:
+        return None
+    x, y = (ac*bb-bc*ab)/det, (bc*aa-ac*ab)/det
+    if not (0 <= x <= width-1 and 0 <= y <= height-1):
+        return None
+    residuals = []
+    for a, dx, dy, nx, ny, c in rows:
+        vx, vy = x-a[0], y-a[1]
+        forward = dx*vx+dy*vy
+        perpendicular = nx*x+ny*y-c
+        if forward < 0 or math.degrees(math.atan2(abs(perpendicular), forward)) > degrees+1e-7:
+            return None
+        residuals.append(perpendicular**2)
+    return dict(point=[x, y], rms_pixels=math.sqrt(sum(residuals)/4))

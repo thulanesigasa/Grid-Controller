@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 from per_eye import assess_eye_pair
-from geometry import intersection, sensitivity, image_point, rotate, cone_overlap
+from geometry import intersection, sensitivity, image_point, rotate, cone_overlap, fit_four_rays
 
 COLORS = ('#00d8ff', '#ffb340')
 
@@ -20,6 +20,7 @@ class App:
         self.image = None
         self.path = None
         self.rays = [[], []]
+        self.manual_rays = [[], [], [], []]
         self.scale, self.offset = 1., [0., 0.]
         self.drag = None
         self.ai_queue = queue.Queue()
@@ -74,8 +75,8 @@ class App:
         for mode, label in (('Edit eyes', 'Adjust eye positions'), ('Eye directions', 'Adjust directions')):
             ttk.Radiobutton(ai_bar, text=label, variable=self.mode, value=mode,
                             command=self.update_help).pack(side='left', padx=5)
-        for mode in ('Player 1', 'Player 2'):
-            ttk.Radiobutton(manual_bar, text='Draw '+mode.lower()+' line', variable=self.mode, value=mode,
+        for i in range(4):
+            ttk.Radiobutton(manual_bar, text=f'P{i//2+1} eye {i%2+1}', variable=self.mode, value=f'Manual eye {i+1}',
                             command=self.update_help).pack(side='left', padx=5)
         self.line_settings = ttk.Frame(root, padding=(10, 3))
         ttk.Checkbutton(self.line_settings, text='Show boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
@@ -123,12 +124,12 @@ class App:
         self.pending_head = None
         self.drag = None
         self.scene_overlay_cache = None
-        self.mode.set('Player 1' if selected == 'Manual' else 'Inspect')
+        self.mode.set('Manual eye 1' if selected == 'Manual' else 'Inspect')
         self.line_settings.pack_forget()
         if selected != 'Scene AI':
             self.line_settings.pack(fill='x', before=self.help_label)
         self.ai_status.set('Previous result restored.' if self.ai_data or any(self.rays) else 'Ready. '+
-                           ('Draw a line for each player.' if selected == 'Manual' else 'Run analysis to get a suggestion.'))
+                           ('Draw one line from each eye: four lines total.' if selected == 'Manual' else 'Run analysis to get a suggestion.'))
         self.update_help()
         if selected == 'Eye lines' and self.ai_data is None and self.workflow_results.get('Scene AI', (None,))[0]:
             self.analyse_image()
@@ -137,6 +138,8 @@ class App:
         mode = self.mode.get()
         if mode.startswith('Head '):
             text = 'Click two opposite corners around the entire head, including hair. Then choose Analyse scene.'
+        elif mode.startswith('Manual eye '):
+            text = 'Click the selected eye centre, then its looking direction. Eye 1 = left on screen; eye 2 = right. Repeat for both players; drag handles to refine.'
         elif mode.startswith('Player '):
             text = 'Click the eyes, then a point in the estimated looking direction. Drag either handle to adjust.'
         elif mode == 'Edit eyes':
@@ -148,7 +151,7 @@ class App:
         else:
             text = {'Scene AI': 'Analyse scene estimates looking regions. Cyan = player 1; orange = player 2; green = shared region.',
                     'Eye lines': 'Analyse eye lines suggests gaze directions. Adjust markers or directions after analysis.',
-                    'Manual': 'Choose a player to draw their estimated looking direction.'}[self.workflow]
+                    'Manual': 'Choose one of the four eyes. Place its eye centre and estimated direction.'}[self.workflow]
         self.help_text.set(text)
         self.draw()
 
@@ -297,6 +300,7 @@ class App:
             messagebox.showerror('Cannot open image', str(exc))
             return
         self.workflow_results = {}
+        self.manual_rays = [[], [], [], []]
         self.path, self.rays, self.clicked = path, [[], []], None
         self.head_boxes = [None, None]
         self.pending_head = None
@@ -330,6 +334,21 @@ class App:
             return self.pan_start(e)
         p = self.point(e)
         if not self.inside(p):
+            return
+        if self.mode.get().startswith('Manual eye '):
+            i = int(self.mode.get().split()[-1])-1
+            for j, handle in enumerate(self.manual_rays[i]):
+                if math.dist(self.screen(handle), (e.x, e.y)) < 12:
+                    self.drag = ('manual_handle', i, j)
+                    return
+            if len(self.manual_rays[i]) == 2:
+                self.manual_rays[i] = []
+            self.manual_rays[i].append(list(p))
+            self.ray_source = 'Manual four-eye estimate'
+            self.ai_status.set(f'P{i//2+1} eye {i%2+1}: '+
+                               ('direction placed. Select the next eye or drag a handle.' if len(self.manual_rays[i]) == 2
+                                else 'eye centre placed. Click its looking direction.'))
+            self.draw()
             return
         if self.mode.get() in ('Head 1', 'Head 2'):
             i = int(self.mode.get()[-1])-1
@@ -406,6 +425,10 @@ class App:
         if self.drag[0] == 'pan':
             _, x, y, ox, oy = self.drag
             self.offset = [ox+e.x-x, oy+e.y-y]
+        elif self.drag[0] == 'manual_handle' and self.inside(self.point(e)):
+            _, i, j = self.drag
+            self.manual_rays[i][j] = list(self.point(e))
+            self.ray_source = 'Manual four-eye estimate'
         elif self.drag[0] == 'eye_direction' and self.inside(self.point(e)):
             _, i, j = self.drag
             face = self.ai_data['faces'][i]
@@ -439,6 +462,8 @@ class App:
         self.cursor.set(f'Image coordinates: X={p[0]:.1f}, Y={p[1]:.1f}' if self.inside(p) else 'Outside image')
 
     def reset(self):
+        if self.workflow == 'Manual':
+            self.manual_rays = [[], [], [], []]
         self.head_boxes = [None, None]
         self.pending_head = None
         self.scene_overlay_cache = None
@@ -451,9 +476,55 @@ class App:
         self.draw()
 
     def estimate(self):
+        if getattr(self, 'workflow', None) == 'Manual':
+            fit = self.manual_fit()
+            return fit['point'] if fit else None
         if self.scene_active():
             return None
         return intersection(*self.rays) if all(len(r) == 2 for r in self.rays) else None
+
+    def manual_fit(self):
+        return fit_four_rays(self.manual_rays, self.degrees(), self.image.width, self.image.height)
+
+    def draw_manual(self):
+        complete = sum(len(ray) == 2 and math.dist(*ray) > 1e-8 for ray in self.manual_rays)
+        polygon = cone_overlap(self.manual_rays, self.degrees(), self.image.width, self.image.height) if complete == 4 else []
+        if polygon:
+            self.canvas.create_polygon(*[v for p in polygon for v in self.screen(p)],
+                                       fill='#a3e635', stipple='gray25', outline='#a3e635', width=1)
+        extent = math.hypot(self.image.width, self.image.height)*2
+        for i, ray in enumerate(self.manual_rays):
+            color = COLORS[i//2]
+            for j, point in enumerate(ray):
+                x, y = self.screen(point)
+                self.canvas.create_oval(x-4, y-4, x+4, y+4, fill=color, outline='white')
+                self.canvas.create_text(x+7, y-10, text=f'P{i//2+1} eye {i%2+1} '+('centre' if j == 0 else 'direction'),
+                                        fill=color, anchor='w')
+            if len(ray) != 2 or math.dist(*ray) < 1e-8:
+                continue
+            variants = [(ray, False)]
+            if self.boundaries.get():
+                variants += [(rotate(ray, d), True) for d in (-self.degrees(), self.degrees())]
+            for (a, b), boundary in variants:
+                length = math.dist(a, b)
+                end = [a[k]+(b[k]-a[k])*extent/length for k in (0, 1)]
+                self.canvas.create_line(*self.screen(a), *self.screen(end), fill=color,
+                                        width=1, dash=(3, 4) if boundary else ())
+        fit = self.manual_fit() if complete == 4 else None
+        if fit:
+            x, y = self.screen(fit['point'])
+            self.canvas.create_line(x-10, y, x+10, y, fill='white', width=2)
+            self.canvas.create_line(x, y-10, x, y+10, fill='white', width=2)
+            detail = f"Fit: X={fit['point'][0]:.1f}, Y={fit['point'][1]:.1f}; line disagreement RMS {fit['rms_pixels']:.1f} px."
+        elif complete < 4:
+            detail = 'Place an eye centre and direction for each of the four eyes.'
+        else:
+            detail = 'No stable point satisfies all four forward directions inside the image.'
+        shared = ' Green shows shared angular tolerance.' if polygon else ''
+        self.result.set(f'Manual: {complete}/4 lines. {detail}{shared} ±{self.degrees():g}° is sensitivity; ball position is unverified.')
+        if self.clicked:
+            x, y = self.screen(self.clicked)
+            self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
 
     def degrees(self):
         try:
@@ -528,6 +599,9 @@ class App:
             visible = Image.alpha_composite(visible.convert('RGBA'), heat)
         self.photo = ImageTk.PhotoImage(visible)
         self.canvas.create_image(0, 0, anchor='nw', image=self.photo)
+        if self.workflow == 'Manual':
+            self.draw_manual()
+            return
         if self.ai_data:
             for i, face in enumerate(self.ai_data['faces']):
                 box = face['box']

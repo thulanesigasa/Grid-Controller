@@ -34,7 +34,7 @@ class WorkspaceTests(unittest.TestCase):
         a.tabs = SimpleNamespace(select=lambda: None, tab=lambda *args: selected.get())
         a.change_workflow()
         self.assertIsNone(a.ai_data)
-        self.assertEqual(a.mode.get(), 'Player 1')
+        self.assertEqual(a.mode.get(), 'Manual eye 1')
         a.rays = [[[1, 2], [3, 4]], []]
         selected.set('Scene AI')
         a.change_workflow()
