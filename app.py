@@ -21,6 +21,7 @@ class App:
         self.image = None
         self.coordinate_size = None
         self.judges_point = None
+        self.previous_estimate = None
         self.path = None
         self.rays = [[], []]
         self.manual_rays = [[], [], [], []]
@@ -81,7 +82,6 @@ class App:
         for i in range(4):
             ttk.Radiobutton(manual_bar, text=f'P{i//2+1} eye {i%2+1}', variable=self.mode, value=f'Manual eye {i+1}',
                             command=self.update_help).pack(side='left', padx=5)
-        ttk.Button(manual_bar, text="Compare judges…", command=self.set_judges_point).pack(side='right')
         self.line_settings = ttk.Frame(root, padding=(10, 3))
         ttk.Checkbutton(self.line_settings, text='Show boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
         ttk.Label(self.line_settings, text='Angle sensitivity ± degrees:').pack(side='left', padx=(15, 5))
@@ -98,6 +98,7 @@ class App:
                             command=self.update_help).pack(side='left', padx=(0, 10))
         ttk.Label(nav, text='Scroll to zoom · Right-drag to move photo').pack(side='left')
         ttk.Button(nav, text='Coordinate grid…', command=self.set_coordinate_grid).pack(side='right')
+        ttk.Button(nav, text='Compare judges…', command=self.set_judges_point).pack(side='right', padx=5)
         ttk.Label(root, textvariable=self.ai_status, padding=(10, 3), wraplength=1100).pack(anchor='w')
         self.canvas = tk.Canvas(root, bg='#111827', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, padx=10)
@@ -146,6 +147,15 @@ class App:
         self.ai_status.set(self.coordinate_label()+'. Only displayed/exported coordinates are scaled; eye lines stay in photo pixels.')
         self.draw()
 
+    def comparison_estimate(self):
+        if self.workflow == 'Manual':
+            fit = self.manual_fit(require_tolerance=False)
+            return fit['point'] if fit else None
+        if self.scene_active() or (self.ai_data or {}).get('per_eye_enabled'):
+            return None
+        point = self.estimate()
+        return point if point is not None and self.inside(point) else None
+
     def set_judges_point(self):
         if self.image is None:
             return messagebox.showinfo('Open image', 'Open a photograph first.')
@@ -162,6 +172,17 @@ class App:
         except ValueError as exc:
             return messagebox.showerror('Invalid reference point', str(exc))
         self.judges_point = point
+        if point is not None and self.comparison_estimate() is None:
+            current = getattr(self, 'previous_estimate', None)
+            initial = ', '.join(f'{v:g}' for v in self.coordinate_point(current)) if current else ''
+            previous = simpledialog.askstring('Previous prediction',
+                self.coordinate_label()+"\nNo single target prediction is loaded.\nEnter your previous estimate X, Y to compare, or Cancel to show only the judges' point.",
+                initialvalue=initial, parent=self.root)
+            if previous is not None:
+                try:
+                    self.previous_estimate = parse_reference(previous, self.image.size, self.coordinate_size)
+                except ValueError as exc:
+                    messagebox.showerror('Invalid previous estimate', str(exc))
         self.draw()
 
     def draw_comparison(self, point):
@@ -170,9 +191,11 @@ class App:
             return
         from comparison import comparison_text
         x, y = self.screen(reference)
-        self.canvas.create_line(*self.screen(point), x, y, fill='#ef4444', width=2, dash=(5, 4))
+        if point is not None:
+            self.canvas.create_line(*self.screen(point), x, y, fill='#ef4444', width=2, dash=(5, 4))
         self.canvas.create_rectangle(x-9, y-9, x+9, y+9, outline='#ef4444', width=3)
-        text = comparison_text(point, reference, self.image.size, self.coordinate_size)
+        text = (comparison_text(point, reference, self.image.size, self.coordinate_size) if point is not None else
+                "Judges' point: "+self.coordinate_text(reference)+"\nNo prediction loaded for comparison.")
         lx = max(4, min(x+20, self.canvas.winfo_width()-350))
         ly = max(4, min(y+25, self.canvas.winfo_height()-85))
         self.canvas.create_rectangle(lx, ly, lx+346, ly+80, fill='white', outline='#ef4444', width=2)
@@ -184,11 +207,15 @@ class App:
             return messagebox.showinfo('Open image', 'Open a photograph first.')
         if self.ai_busy:
             return messagebox.showinfo('Analysis running', 'Wait for analysis to finish before saving.')
+        previous_only = False
         if self.workflow == 'Manual':
             fit = self.manual_fit(require_tolerance=False)
+            if fit is None and getattr(self, 'previous_estimate', None) is not None:
+                previous_only = True
+                fit = dict(point=self.previous_estimate, within_tolerance=False)
             if fit is None:
                 return messagebox.showinfo('No target position', 'Place four eye lines that give a stable forward position inside the image.')
-            point, rays = fit['point'], self.manual_rays
+            point, rays = fit['point'], [] if previous_only else self.manual_rays
             approximate = not fit['within_tolerance']
         else:
             if self.scene_active() or (self.ai_data or {}).get('per_eye_enabled'):
@@ -210,7 +237,8 @@ class App:
             picture = render_prediction(self.image, rays, point, approximate,
                                         self.degrees(), self.boundaries.get(),
                                         coordinate_size=getattr(self, 'coordinate_size', None),
-                                        reference=getattr(self, 'judges_point', None) if self.workflow == 'Manual' else None)
+                                        reference=getattr(self, 'judges_point', None),
+                                        previous_estimate=previous_only)
             if Path(path).suffix.lower() in ('.jpg', '.jpeg'):
                 picture.save(path, format='JPEG', quality=95)
             else:
@@ -414,6 +442,7 @@ class App:
         self.workflow_results = {}
         self.coordinate_size = None
         self.judges_point = None
+        self.previous_estimate = None
         self.manual_rays = [[], [], [], []]
         self.path, self.rays, self.clicked = path, [[], []], None
         self.head_boxes = [None, None]
@@ -650,11 +679,21 @@ class App:
             detail = 'No stable point satisfies all four forward directions inside the image.'
         shared = ' Green shows shared angular tolerance.' if polygon else ''
         self.result.set(f'Manual: {complete}/4 lines. {detail}{shared} ±{self.degrees():g}° is sensitivity; ball position is unverified.')
-        if fit:
-            self.draw_comparison(fit['point'])
+        comparison_point = fit['point'] if fit else getattr(self, 'previous_estimate', None)
+        if not fit and comparison_point is not None:
+            self.draw_previous_estimate(comparison_point)
+        self.draw_comparison(comparison_point)
         if self.clicked:
             x, y = self.screen(self.clicked)
             self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
+
+    def draw_previous_estimate(self, comparison_point):
+        x, y = self.screen(comparison_point)
+        self.canvas.create_oval(x-10, y-10, x+10, y+10, fill='#a78bfa', outline='black', width=2)
+        self.canvas.create_line(x-15, y, x+15, y, fill='white', width=2)
+        self.canvas.create_line(x, y-15, x, y+15, fill='white', width=2)
+        self.canvas.create_text(x+18, y-18, text='Previous estimate (entered)\n'+self.coordinate_text(comparison_point),
+                                anchor='sw', fill='black')
 
     def degrees(self):
         try:
@@ -792,6 +831,13 @@ class App:
         if self.clicked:
             x, y = self.screen(self.clicked)
             self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
+
+        point = self.comparison_estimate()
+        if point is None:
+            point = getattr(self, 'previous_estimate', None)
+            if point is not None:
+                self.draw_previous_estimate(point)
+        self.draw_comparison(point)
 
 if __name__ == '__main__':
     root = tk.Tk()

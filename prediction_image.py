@@ -24,14 +24,14 @@ def _font(size):
     return ImageFont.load_default(size=size)
 
 
-def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True, coordinate_size=None, reference=None):
+def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True, coordinate_size=None, reference=None, previous_estimate=False):
     """Copy the photo; render original-pixel lines, marker and a white caption."""
     if len(point) != 2 or not all(math.isfinite(v) for v in point):
         raise ValueError('Prediction must contain finite X/Y coordinates.')
     w, h = image.size
     if not (0 <= point[0] <= w-1 and 0 <= point[1] <= h-1):
         raise ValueError('Prediction lies outside the image.')
-    if len(rays) not in (2, 4) or any(len(r) != 2 or any(len(p) != 2 for p in r)
+    if (len(rays) not in (2, 4) and not (previous_estimate and not rays)) or any(len(r) != 2 or any(len(p) != 2 for p in r)
                                        or not all(math.isfinite(v) for p in r for v in p)
                                        or math.dist(*r) < 1e-8 for r in rays):
         raise ValueError('Complete, nonzero prediction lines are required.')
@@ -67,6 +67,8 @@ def render_prediction(image, rays, point, approximate=False, degrees=2., boundar
     draw.line((x, y-radius*1.5, x, y+radius*1.5), fill='white', width=2)
     draw.ellipse((x-2, y-2, x+2, y+2), fill='black')
     caption = prediction_caption(point, approximate, image.size, coordinate_size)
+    if previous_estimate:
+        caption = caption.replace('Approximate fit - lines disagree', 'Previous estimate - entered').replace('Lines agree - estimate only', 'Previous estimate - entered')
     size = max(12, round(min(w, h)/65))
     pad = max(6, round(size*.5))
     while True:
@@ -104,5 +106,5 @@ def render_prediction(image, rays, point, approximate=False, degrees=2., boundar
         point_grid=list(map_point(point, image.size, coordinate_size)),
         reference_image=list(reference) if reference is not None else None,
         reference_grid=list(map_point(reference, image.size, coordinate_size)) if reference is not None else None,
-        approximate=approximate, green_means='lines agree, accuracy unverified', credit='by thulanesigasa'), allow_nan=False)
+        previous_estimate=previous_estimate, approximate=approximate, green_means='lines agree, accuracy unverified', credit='by thulanesigasa'), allow_nan=False)
     return result
