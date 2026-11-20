@@ -24,7 +24,7 @@ def _font(size):
     return ImageFont.load_default(size=size)
 
 
-def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True, coordinate_size=None):
+def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True, coordinate_size=None, reference=None):
     """Copy the photo; render original-pixel lines, marker and a white caption."""
     if len(point) != 2 or not all(math.isfinite(v) for v in point):
         raise ValueError('Prediction must contain finite X/Y coordinates.')
@@ -83,8 +83,26 @@ def render_prediction(image, rays, point, approximate=False, degrees=2., boundar
     draw.rectangle((left, top, left+bw, top+bh), fill='white', outline='black', width=1)
     draw.multiline_text((left+pad-box[0], top+pad-box[1]), caption,
                         font=font, fill='black', spacing=4)
+    if reference is not None:
+        from comparison import comparison_text, parse_reference
+        # Validate in photo pixels, then compare in the selected output grid.
+        parse_reference(f'{reference[0]}, {reference[1]}', image.size)
+        rx, ry = reference
+        draw.line((x, y, rx, ry), fill='#ef4444', width=2)
+        draw.rectangle((rx-radius, ry-radius, rx+radius, ry+radius), outline='#ef4444', width=3)
+        text = comparison_text(point, reference, image.size, coordinate_size)
+        box2 = draw.multiline_textbbox((0, 0), text, font=font, spacing=4)
+        rw, rh = box2[2]-box2[0]+pad*2, box2[3]-box2[1]+pad*2
+        # A separate panel at the bottom preserves the estimate's original caption.
+        if rw > w-8 or rh > h-8:
+            raise ValueError('Image is too small for a readable comparison label.')
+        left2, top2 = 4, h-rh-4
+        draw.rectangle((left2, top2, left2+rw, top2+rh), fill='white', outline='#ef4444', width=2)
+        draw.multiline_text((left2+pad-box2[0], top2+pad-box2[1]), text, font=font, fill='black', spacing=4)
     result.info['GridController'] = json.dumps(dict(image_size=list(image.size),
         coordinate_size=list(coordinate_size or image.size), point_image=list(point),
         point_grid=list(map_point(point, image.size, coordinate_size)),
+        reference_image=list(reference) if reference is not None else None,
+        reference_grid=list(map_point(reference, image.size, coordinate_size)) if reference is not None else None,
         approximate=approximate, green_means='lines agree, accuracy unverified', credit='by thulanesigasa'), allow_nan=False)
     return result

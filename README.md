@@ -361,3 +361,9 @@ Green target labels now say **Lines agree — estimate only**. Agreement between
 lines is not measured accuracy against a judged target. Amber still means the
 lines disagree at the selected angular tolerance. Mapping changes the units;
 it does not remove the prediction error observed in the completed competition.
+
+### Compare a published judges’ point
+
+In **Manual**, choose **Compare judges…** and enter the published X, Y using the grid shown in the dialog. Set **Coordinate grid…** first if the competition uses a different resolution. A red square marks the judges’ point; a red connector and panel show signed differences (judges minus estimate) and Euclidean distance in the selected grid. Positive X is right; positive Y is down. For Comp 26 use grid `4416 x 3336` and judges `2177, 1208`.
+
+**Save prediction image** includes the comparison and its PNG metadata. Eye lines and the calculated estimate are never adjusted by this reference. Changing the grid remaps the reference labels; opening another photo clears it. Enter `clear` in the comparison dialog to remove it. This is retrospective comparison, not training or evidence of future accuracy.

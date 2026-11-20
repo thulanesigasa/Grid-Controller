@@ -20,6 +20,7 @@ class App:
         root.geometry('1200x800')
         self.image = None
         self.coordinate_size = None
+        self.judges_point = None
         self.path = None
         self.rays = [[], []]
         self.manual_rays = [[], [], [], []]
@@ -80,6 +81,7 @@ class App:
         for i in range(4):
             ttk.Radiobutton(manual_bar, text=f'P{i//2+1} eye {i%2+1}', variable=self.mode, value=f'Manual eye {i+1}',
                             command=self.update_help).pack(side='left', padx=5)
+        ttk.Button(manual_bar, text="Compare judges…", command=self.set_judges_point).pack(side='right')
         self.line_settings = ttk.Frame(root, padding=(10, 3))
         ttk.Checkbutton(self.line_settings, text='Show boundary lines', variable=self.boundaries, command=self.draw).pack(side='left')
         ttk.Label(self.line_settings, text='Angle sensitivity ± degrees:').pack(side='left', padx=(15, 5))
@@ -144,6 +146,39 @@ class App:
         self.ai_status.set(self.coordinate_label()+'. Only displayed/exported coordinates are scaled; eye lines stay in photo pixels.')
         self.draw()
 
+    def set_judges_point(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph first.')
+        current = getattr(self, 'judges_point', None)
+        initial = ', '.join(f'{v:g}' for v in self.coordinate_point(current)) if current else ''
+        text = simpledialog.askstring("Compare judges' point",
+            self.coordinate_label()+"\nEnter the published judges' X, Y. Enter clear to remove.\nThis comparison does not change your eye lines.",
+            initialvalue=initial, parent=self.root)
+        if text is None:
+            return
+        try:
+            from comparison import parse_reference
+            point = None if text.strip().lower() == 'clear' else parse_reference(text, self.image.size, self.coordinate_size)
+        except ValueError as exc:
+            return messagebox.showerror('Invalid reference point', str(exc))
+        self.judges_point = point
+        self.draw()
+
+    def draw_comparison(self, point):
+        reference = getattr(self, 'judges_point', None)
+        if reference is None:
+            return
+        from comparison import comparison_text
+        x, y = self.screen(reference)
+        self.canvas.create_line(*self.screen(point), x, y, fill='#ef4444', width=2, dash=(5, 4))
+        self.canvas.create_rectangle(x-9, y-9, x+9, y+9, outline='#ef4444', width=3)
+        text = comparison_text(point, reference, self.image.size, self.coordinate_size)
+        lx = max(4, min(x+20, self.canvas.winfo_width()-350))
+        ly = max(4, min(y+25, self.canvas.winfo_height()-85))
+        self.canvas.create_rectangle(lx, ly, lx+346, ly+80, fill='white', outline='#ef4444', width=2)
+        self.canvas.create_text(lx+6, ly+6, text=text, fill='black', anchor='nw')
+        self.result.set(self.result.get()+' Comparison: '+text.replace('\n', '; '))
+
     def save_prediction_image(self):
         if self.image is None:
             return messagebox.showinfo('Open image', 'Open a photograph first.')
@@ -174,7 +209,8 @@ class App:
             from prediction_image import render_prediction
             picture = render_prediction(self.image, rays, point, approximate,
                                         self.degrees(), self.boundaries.get(),
-                                        coordinate_size=getattr(self, 'coordinate_size', None))
+                                        coordinate_size=getattr(self, 'coordinate_size', None),
+                                        reference=getattr(self, 'judges_point', None) if self.workflow == 'Manual' else None)
             if Path(path).suffix.lower() in ('.jpg', '.jpeg'):
                 picture.save(path, format='JPEG', quality=95)
             else:
@@ -377,6 +413,7 @@ class App:
             return
         self.workflow_results = {}
         self.coordinate_size = None
+        self.judges_point = None
         self.manual_rays = [[], [], [], []]
         self.path, self.rays, self.clicked = path, [[], []], None
         self.head_boxes = [None, None]
@@ -613,6 +650,8 @@ class App:
             detail = 'No stable point satisfies all four forward directions inside the image.'
         shared = ' Green shows shared angular tolerance.' if polygon else ''
         self.result.set(f'Manual: {complete}/4 lines. {detail}{shared} ±{self.degrees():g}° is sensitivity; ball position is unverified.')
+        if fit:
+            self.draw_comparison(fit['point'])
         if self.clicked:
             x, y = self.screen(self.clicked)
             self.canvas.create_rectangle(x-6, y-6, x+6, y+6, outline='#a3e635', width=2)
