@@ -51,7 +51,7 @@ class ManualEyesTests(unittest.TestCase):
 
     def app(self):
         a = App.__new__(App)
-        a.image = SimpleNamespace(width=100, height=100)
+        a.image = SimpleNamespace(width=100, height=100, size=(100, 100))
         a.workflow = 'Manual'
         a.mode = Value('Manual eye 1')
         a.ai_status = Value('')

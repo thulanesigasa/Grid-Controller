@@ -1,13 +1,17 @@
 """Render a shareable prediction in original-image coordinates."""
 import math
+import json
+from coordinate_grid import map_point
 from PIL import ImageDraw, ImageFont
 from geometry import rotate, cone_overlap
 
 
-def prediction_caption(point, approximate=False):
-    x, y = point
-    return (f'X: {x:.1f}   Y: {y:.1f}\n'
-            + ('Approximate fit - lines disagree' if approximate else 'Estimated position')
+def prediction_caption(point, approximate=False, image_size=None, coordinate_size=None):
+    x, y = map_point(point, image_size, coordinate_size)
+    grid = (f'Competition grid {coordinate_size[0]} x {coordinate_size[1]}\n' if coordinate_size else
+            f'Image pixels {image_size[0]} x {image_size[1]}\n' if image_size else '')
+    return (f'X: {x:.1f}   Y: {y:.1f}\n' + grid
+            + ('Approximate fit - lines disagree' if approximate else 'Lines agree - estimate only')
             + '\nby thulanesigasa')
 
 
@@ -20,7 +24,7 @@ def _font(size):
     return ImageFont.load_default(size=size)
 
 
-def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True):
+def render_prediction(image, rays, point, approximate=False, degrees=2., boundaries=True, coordinate_size=None):
     """Copy the photo; render original-pixel lines, marker and a white caption."""
     if len(point) != 2 or not all(math.isfinite(v) for v in point):
         raise ValueError('Prediction must contain finite X/Y coordinates.')
@@ -62,7 +66,7 @@ def render_prediction(image, rays, point, approximate=False, degrees=2., boundar
     draw.line((x-radius*1.5, y, x+radius*1.5, y), fill='white', width=2)
     draw.line((x, y-radius*1.5, x, y+radius*1.5), fill='white', width=2)
     draw.ellipse((x-2, y-2, x+2, y+2), fill='black')
-    caption = prediction_caption(point, approximate)
+    caption = prediction_caption(point, approximate, image.size, coordinate_size)
     size = max(12, round(min(w, h)/65))
     pad = max(6, round(size*.5))
     while True:
@@ -79,4 +83,8 @@ def render_prediction(image, rays, point, approximate=False, degrees=2., boundar
     draw.rectangle((left, top, left+bw, top+bh), fill='white', outline='black', width=1)
     draw.multiline_text((left+pad-box[0], top+pad-box[1]), caption,
                         font=font, fill='black', spacing=4)
+    result.info['GridController'] = json.dumps(dict(image_size=list(image.size),
+        coordinate_size=list(coordinate_size or image.size), point_image=list(point),
+        point_grid=list(map_point(point, image.size, coordinate_size)),
+        approximate=approximate, green_means='lines agree, accuracy unverified', credit='by thulanesigasa'), allow_nan=False)
     return result

@@ -25,7 +25,7 @@ class PredictionImageTests(unittest.TestCase):
 
     def test_caption_contains_exact_coordinates_credit_and_uncertainty(self):
         self.assertEqual(prediction_caption([123.45, 67.89]),
-                         'X: 123.5   Y: 67.9\nEstimated position\nby thulanesigasa')
+                         'X: 123.5   Y: 67.9\nLines agree - estimate only\nby thulanesigasa')
         self.assertIn('Approximate fit - lines disagree', prediction_caption([10, 20], True))
 
     def test_edge_target_label_fits_and_invalid_position_rejected(self):

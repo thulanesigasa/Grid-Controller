@@ -4,8 +4,9 @@ import math
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 from PIL import Image, ImageTk
+from coordinate_grid import map_point, parse_grid
 from per_eye import assess_eye_pair
 from geometry import intersection, sensitivity, image_point, rotate, cone_overlap, fit_four_rays
 
@@ -18,6 +19,7 @@ class App:
         root.title('Grid Controller — Gaze Lab')
         root.geometry('1200x800')
         self.image = None
+        self.coordinate_size = None
         self.path = None
         self.rays = [[], []]
         self.manual_rays = [[], [], [], []]
@@ -93,6 +95,7 @@ class App:
             ttk.Radiobutton(nav, text=label, variable=self.mode, value=mode,
                             command=self.update_help).pack(side='left', padx=(0, 10))
         ttk.Label(nav, text='Scroll to zoom · Right-drag to move photo').pack(side='left')
+        ttk.Button(nav, text='Coordinate grid…', command=self.set_coordinate_grid).pack(side='right')
         ttk.Label(root, textvariable=self.ai_status, padding=(10, 3), wraplength=1100).pack(anchor='w')
         self.canvas = tk.Canvas(root, bg='#111827', highlightthickness=0)
         self.canvas.pack(fill='both', expand=True, padx=10)
@@ -109,6 +112,37 @@ class App:
         self.canvas.bind('<Configure>', lambda e: self.draw())
         ttk.Label(root, textvariable=self.cursor, padding=(10, 4)).pack(anchor='w')
         ttk.Label(root, textvariable=self.result, padding=(10, 4), wraplength=1150).pack(anchor='w')
+
+    def coordinate_label(self):
+        size = getattr(self, 'coordinate_size', None)
+        if size:
+            return f'Competition grid {size[0]} × {size[1]}'
+        return f'Image pixels {self.image.width} × {self.image.height}'
+
+    def coordinate_point(self, point):
+        return map_point(point, self.image.size, getattr(self, 'coordinate_size', None))
+
+    def coordinate_text(self, point):
+        x, y = self.coordinate_point(point)
+        return f'X={x:.1f}, Y={y:.1f}'
+
+    def set_coordinate_grid(self):
+        if self.image is None:
+            return messagebox.showinfo('Open image', 'Open a photograph first.')
+        size = self.coordinate_size or self.image.size
+        text = simpledialog.askstring('Coordinate grid',
+                    'Enter the official competition width x height.\nUse the same uncropped photo.\nEnter image to return to photo-pixel coordinates.',
+                    initialvalue=f'{size[0]} x {size[1]}', parent=self.root)
+        if text is None:
+            return
+        try:
+            size = parse_grid(text, self.image.size)
+        except ValueError as exc:
+            return messagebox.showerror('Invalid coordinate grid', str(exc))
+        self.coordinate_size = size
+        self.cursor.set(self.coordinate_label())
+        self.ai_status.set(self.coordinate_label()+'. Only displayed/exported coordinates are scaled; eye lines stay in photo pixels.')
+        self.draw()
 
     def save_prediction_image(self):
         if self.image is None:
@@ -139,11 +173,15 @@ class App:
         try:
             from prediction_image import render_prediction
             picture = render_prediction(self.image, rays, point, approximate,
-                                        self.degrees(), self.boundaries.get())
+                                        self.degrees(), self.boundaries.get(),
+                                        coordinate_size=getattr(self, 'coordinate_size', None))
             if Path(path).suffix.lower() in ('.jpg', '.jpeg'):
                 picture.save(path, format='JPEG', quality=95)
             else:
-                picture.save(path, format='PNG')
+                from PIL.PngImagePlugin import PngInfo
+                metadata = PngInfo()
+                metadata.add_text('GridController', picture.info['GridController'])
+                picture.save(path, format='PNG', pnginfo=metadata)
             self.ai_status.set('Prediction image saved with coordinates and by thulanesigasa.')
         except (OSError, ValueError) as exc:
             messagebox.showerror('Cannot save image', str(exc))
@@ -338,6 +376,7 @@ class App:
             messagebox.showerror('Cannot open image', str(exc))
             return
         self.workflow_results = {}
+        self.coordinate_size = None
         self.manual_rays = [[], [], [], []]
         self.path, self.rays, self.clicked = path, [[], []], None
         self.head_boxes = [None, None]
@@ -346,6 +385,7 @@ class App:
         self.ai_data = None
         self.ray_source = "Manual"
         self.root.title(f'Grid Controller — {self.image.width:,} × {self.image.height:,} pixels')
+        self.cursor.set(self.coordinate_label())
         self.fit()
 
     def fit(self):
@@ -437,7 +477,7 @@ class App:
             return
         if self.mode.get() == 'Inspect':
             self.clicked = p
-            self.ai_status.set(f'Selected original-image point: X={p[0]:.1f}, Y={p[1]:.1f}')
+            self.ai_status.set(f'Selected point — {self.coordinate_label()}: {self.coordinate_text(p)}')
         else:
             if (self.ai_data or {}).get('per_eye_enabled'):
                 self.ai_status.set('Use Eye directions to edit per-eye rays, or uncheck Per-eye AI and analyse again.')
@@ -497,7 +537,7 @@ class App:
 
     def hover(self, e):
         p = self.point(e)
-        self.cursor.set(f'Image coordinates: X={p[0]:.1f}, Y={p[1]:.1f}' if self.inside(p) else 'Outside image')
+        self.cursor.set(f'{self.coordinate_label()}: {self.coordinate_text(p)}' if self.inside(p) else 'Outside image')
 
     def reset(self):
         if self.workflow == 'Manual':
@@ -557,14 +597,14 @@ class App:
             self.canvas.create_line(x-18, y, x+18, y, fill='white', width=2)
             self.canvas.create_line(x, y-18, x, y+18, fill='white', width=2)
             self.canvas.create_oval(x-3, y-3, x+3, y+3, fill='black', outline='black')
-            label = 'MANUAL FIT' if supported else 'APPROXIMATE FIT — lines disagree'
-            lx = max(4, min(x+22, self.canvas.winfo_width()-294))
-            ly = max(4, min(y-44, self.canvas.winfo_height()-56))
-            self.canvas.create_rectangle(lx, ly, lx+290, ly+50, fill='#111827', outline=color, width=2)
+            label = 'LINES AGREE — estimate only' if supported else 'APPROXIMATE FIT — lines disagree'
+            lx = max(4, min(x+22, self.canvas.winfo_width()-334))
+            ly = max(4, min(y-44, self.canvas.winfo_height()-78))
+            self.canvas.create_rectangle(lx, ly, lx+330, ly+72, fill='#111827', outline=color, width=2)
             self.canvas.create_text(lx+7, ly+6,
-                                    text=f"{label}\nX={fit['point'][0]:.1f}   Y={fit['point'][1]:.1f}",
-                                    fill=color, anchor='nw', font=('', 10, 'bold'))
-            detail = f"{'Fit' if supported else 'Approximate fit'}: X={fit['point'][0]:.1f}, Y={fit['point'][1]:.1f}; line disagreement RMS {fit['rms_pixels']:.1f} px."
+                                    text=f"{label}\n{self.coordinate_text(fit['point'])}\n{self.coordinate_label()}",
+                                    fill=color, anchor='nw', font=('', 9, 'bold'))
+            detail = f"{'Lines agree — estimate' if supported else 'Approximate fit'}: {self.coordinate_text(fit['point'])} ({self.coordinate_label()}); line disagreement RMS {fit['rms_pixels']:.1f} photo px."
             if not supported:
                 detail += f" AMBER: outside ±{self.degrees():g}°; largest angular miss {fit['max_angle_degrees']:.1f}°."
         elif complete < 4:
@@ -692,9 +732,9 @@ class App:
                 self.canvas.create_line(x-12, y, x+12, y, fill='white', width=2)
                 self.canvas.create_line(x, y-12, x, y+12, fill='white', width=2)
                 xs, ys = [q[0] for q in samples], [q[1] for q in samples]
-                self.result.set(f'{self.ray_source} intersection: X={p[0]:.1f}, Y={p[1]:.1f} '
+                self.result.set(f'{self.ray_source} intersection: {self.coordinate_text(p)} ({self.coordinate_label()}) '
                     f'({"inside" if self.inside(p) else "OUTSIDE"} image). '
-                    f'±{self.degrees():g}° sampled range: X {min(xs):.0f}–{max(xs):.0f}, '
+                    f'±{self.degrees():g}° sampled range in photo pixels: X {min(xs):.0f}–{max(xs):.0f}, '
                     f'Y {min(ys):.0f}–{max(ys):.0f}. Sensitivity only; not confidence or a verified ball location.')
         if (self.ai_data or {}).get('per_eye_enabled'):
             self.draw_eye_overlay()

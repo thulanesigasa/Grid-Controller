@@ -327,10 +327,37 @@ Click **Save prediction image** after a target coordinate appears. Choose PNG or
 JPEG and a destination. The export uses the full original photo dimensions,
 independent of viewport zoom and pan. It includes the current rays, optional
 angular boundaries, shared region, target marker, and a white rectangle with
-original-image X/Y coordinates and **by thulanesigasa**.
+X/Y coordinates in the selected grid and **by thulanesigasa**.
 
 Amber manual fits are explicitly labelled **Approximate fit - lines disagree**
 in the exported image. A missing/unstable/outside target cannot be saved as a
 coordinate prediction. Scene heatmaps and separate-eye mode currently have no
 single exported target; use Manual for a four-eye coordinate estimate. The
 original source photograph cannot be overwritten through this button.
+
+
+## Competition coordinate grid
+
+After opening a photo, click **Coordinate grid…** beside the navigation controls.
+Enter the official source width and height, for example **4416 x 3336** for
+Competition 26. The loaded photo can be a smaller, uncropped version. Width and
+height must preserve the same aspect ratio (within 0.5% for resize rounding).
+This check cannot establish that two photos have the same crop; verify that
+both show the exact same image content.
+
+The cursor, selected point, fitted target and exported caption then use the
+competition grid, explicitly labelled with its dimensions. Lines, marker location,
+image processing and RMS disagreement remain in photo pixels. The app scales
+X by grid_width/photo_width and Y by grid_height/photo_height, matching the
+website convention. It does not resize the photo or improve the gaze estimate.
+
+Enter **image** in the same dialog to return to image pixels. Opening another
+photo resets the grid, because official dimensions can change between games.
+PNG exports record original photo dimensions, selected grid, both target-coordinate
+pairs and approximate-fit status in a `GridController` text metadata field. JPEG
+exports retain the visible coordinate-grid label but not this PNG metadata.
+
+Green target labels now say **Lines agree — estimate only**. Agreement between
+lines is not measured accuracy against a judged target. Amber still means the
+lines disagree at the selected angular tolerance. Mapping changes the units;
+it does not remove the prediction error observed in the completed competition.
